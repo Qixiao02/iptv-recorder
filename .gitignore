@@ -1,0 +1,48 @@
+# Rust
+/target/
+backend/target/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+
+# Runtime directories
+backend/logs/
+backend/recordings/
+backend/tmp/
+
+# Custom config (keep default.toml, ignore overrides)
+backend/config/config.toml
+
+# Logs
+Logs/
+*.log
+
+# Claude Code
+.claude/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Binary tools
+*.exe
+
+# Screenshots / test images
+*.png

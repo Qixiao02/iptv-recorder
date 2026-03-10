@@ -1,0 +1,76 @@
+# IPTV Recorder 配置文件
+#
+# 配置优先级: 环境变量 > 配置文件 > 默认值
+#
+# 环境变量格式示例:
+#   IPTV__SERVER__HOST=0.0.0.0
+#   IPTV__DATABASE__PATH=/path/to/db
+
+[server]
+# 服务器监听地址
+host = "127.0.0.1"
+# 服务器监听端口
+port = 3000
+# Worker 线程数 (0 = CPU 核心数)
+workers = 4
+
+[database]
+# SQLite 数据库文件路径
+path = "data/iptv-recorder.db"
+# 连接池最大连接数
+pool_size = 10
+
+[storage]
+# 录制文件存储目录
+recordings_dir = "data/recordings"
+# 临时文件目录
+temp_dir = "data/.tmp"
+# 最小剩余空间 (MB)，低于此值暂停新任务
+min_free_space_mb = 1024
+
+[recorder]
+# N_m3u8DL-RE 可执行文件路径
+# Windows: "N_m3u8DL-RE.exe" 或完整路径
+# Linux: "/usr/local/bin/N_m3u8DL-RE"
+executable = "N_m3u8DL-RE"
+# 全局最大并发录制数
+max_concurrent = 5
+# 单任务超时时间 (秒)
+task_timeout_secs = 7200
+
+# 后处理设置（录制完成后自动转码）
+[recorder.post_process]
+# 转码模式:
+#   - "off"      : 不转码，直接保存原始流（最快，文件最大）
+#   - "realtime" : 实时转码，录制时直接输出转码后的文件（省时省空间，CPU要求高）
+#   - "post"     : 后期转码，录制完成后再转码（最稳定，需要双倍时间）
+mode = "off"
+
+# FFmpeg 可执行文件路径 (留空则使用系统 PATH 中的 ffmpeg)
+ffmpeg_path = ""
+# 转码预设: high(高质量), medium(中等), low(低质量/小体积), custom(自定义)
+preset = "medium"
+# 视频码率 (当 preset = "custom" 时使用，如: 2M, 1500K)
+video_bitrate = ""
+# 音频码率 (当 preset = "custom" 时使用，如: 192K, 128K)
+audio_bitrate = "128k"
+# CRF 质量 (当 preset = "custom" 时使用，范围 0-51，越小质量越高，默认 23)
+crf = 23
+# 编码速度预设 (当 preset = "custom" 时使用: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow)
+encode_preset = "medium"
+# 自定义 FFmpeg 参数 (高级用户，会覆盖其他参数)
+custom_args = ""
+# 转码完成后删除原始文件 (仅 post 模式有效)
+delete_original = true
+# 输出格式: mp4, mkv, ts
+output_format = "mp4"
+
+[scheduler]
+# 默认时区
+timezone = "Asia/Shanghai"
+# 任务记录保留天数
+task_retention_days = 30
+
+# [notification]
+# Webhook URL (录制完成通知)
+# webhook_url = "http://your-server.com/webhook"
