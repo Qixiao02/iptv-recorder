@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::services::{AuthService, Claims};
+use crate::services::AuthService;
 
 /// 错误响应
 #[derive(Serialize)]

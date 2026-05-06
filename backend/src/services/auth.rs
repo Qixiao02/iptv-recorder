@@ -6,17 +6,25 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use uuid::Uuid;
 
-use crate::models::{User, LoginRequest, LoginResponse, UserInfo, ChangePasswordRequest};
+use crate::models::{User, LoginRequest, LoginResponse, ChangePasswordRequest};
 
 /// JWT 配置
 const JWT_EXPIRATION_HOURS: i64 = 24;
+const MIN_JWT_SECRET_LEN: usize = 32;
 
-fn jwt_secret() -> Vec<u8> {
-    std::env::var("IPTV_JWT_SECRET")
-        .unwrap_or_else(|_| "iptv-recorder-jwt-secret-key-2024".to_string())
-        .into_bytes()
+fn jwt_secret() -> Result<Vec<u8>> {
+    let secret = std::env::var("IPTV_JWT_SECRET")
+        .map_err(|_| anyhow!("缺少环境变量 IPTV_JWT_SECRET，请配置至少 32 位的 JWT 密钥"))?;
+
+    if secret.trim().len() < MIN_JWT_SECRET_LEN {
+        return Err(anyhow!(
+            "环境变量 IPTV_JWT_SECRET 长度不足，至少需要 {} 位字符",
+            MIN_JWT_SECRET_LEN
+        ));
+    }
+
+    Ok(secret.into_bytes())
 }
 
 /// JWT Claims
@@ -39,6 +47,11 @@ impl AuthService {
         Self { db }
     }
 
+    /// 校验 JWT 密钥配置
+    pub fn validate_runtime_config() -> Result<()> {
+        jwt_secret().map(|_| ())
+    }
+
     /// 初始化默认管理员账号
     pub async fn init_default_admin(&self) -> Result<()> {
         // 检查是否已存在 admin 用户
@@ -49,7 +62,12 @@ impl AuthService {
         .await?;
 
         if !exists {
-            let password_hash = hash("admin001", DEFAULT_COST)?;
+            let generated_password = format!("admin-{}", uuid::Uuid::new_v4().simple());
+            let initial_password = std::env::var("IPTV_INITIAL_ADMIN_PASSWORD")
+                .ok()
+                .filter(|password| password.trim().len() >= 8)
+                .unwrap_or(generated_password);
+            let password_hash = hash(&initial_password, DEFAULT_COST)?;
             let now = Utc::now().to_rfc3339();
 
             sqlx::query(
@@ -68,7 +86,10 @@ impl AuthService {
             .execute(&self.db)
             .await?;
 
-            tracing::info!("Created default admin user: admin / admin001");
+            tracing::warn!(
+                "Created initial admin user. username=admin, password={}. 请立即登录并修改密码，或通过 IPTV_INITIAL_ADMIN_PASSWORD 显式设置首个管理员密码。",
+                initial_password
+            );
         }
 
         Ok(())
@@ -118,7 +139,7 @@ impl AuthService {
         encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(&jwt_secret()),
+            &EncodingKey::from_secret(&jwt_secret()?),
         )
         .map_err(|e| anyhow!("生成 Token 失败: {}", e))
     }
@@ -127,7 +148,7 @@ impl AuthService {
     pub fn verify_token(token: &str) -> Result<Claims> {
         let token_data = decode::<Claims>(
             token,
-            &DecodingKey::from_secret(&jwt_secret()),
+            &DecodingKey::from_secret(&jwt_secret()?),
             &Validation::default(),
         )
         .map_err(|e| anyhow!("Token 无效: {}", e))?;
@@ -196,5 +217,70 @@ impl AuthService {
         }
 
         self.get_current_user(user_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, core::database};
+    use std::{path::PathBuf, sync::{Mutex, OnceLock}, time::{SystemTime, UNIX_EPOCH}};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("iptv-recorder-{name}-{nanos}.db"))
+    }
+
+    #[test]
+    fn validate_runtime_config_requires_secret() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        std::env::remove_var("IPTV_JWT_SECRET");
+
+        let result = AuthService::validate_runtime_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("IPTV_JWT_SECRET"));
+    }
+
+    #[test]
+    fn validate_runtime_config_rejects_short_secret() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        std::env::set_var("IPTV_JWT_SECRET", "too-short-secret");
+
+        let result = AuthService::validate_runtime_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("至少需要 32 位"));
+    }
+
+    #[tokio::test]
+    async fn init_default_admin_uses_configured_password() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        std::env::set_var("IPTV_JWT_SECRET", "abcdefghijklmnopqrstuvwxyz123456");
+        std::env::set_var("IPTV_INITIAL_ADMIN_PASSWORD", "super-secure-admin");
+
+        let db_path = temp_db_path("auth");
+        let db = database::init(db_path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("db init");
+        let service = AuthService::new(db);
+
+        service.init_default_admin().await.expect("init admin");
+        let login = service.login(LoginRequest {
+            username: "admin".to_string(),
+            password: "super-secure-admin".to_string(),
+        }).await;
+
+        assert!(login.is_ok());
+
+        let _ = tokio::fs::remove_file(db_path).await;
+        std::env::remove_var("IPTV_INITIAL_ADMIN_PASSWORD");
+        let _ = Config::default(); // keep config module linked in test builds
     }
 }

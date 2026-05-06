@@ -173,6 +173,7 @@ impl PostProcessConfig {
     }
 
     /// 是否实时转码
+    #[allow(dead_code)]
     pub fn is_realtime(&self) -> bool {
         self.mode == "realtime"
     }

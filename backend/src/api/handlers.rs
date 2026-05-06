@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State, Extension},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
     body::Body,
 };
@@ -555,12 +555,18 @@ fn not_found_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
 pub struct StreamProxyQuery {
     /// 要代理的流 URL
     pub url: String,
+    /// 查询参数 token，供播放器等无法自定义 Header 的场景使用
+    pub token: Option<String>,
 }
 
 /// 流代理处理器 - 用于绕过 CORS 限制
 pub async fn stream_proxy(
+    headers: HeaderMap,
     Query(query): Query<StreamProxyQuery>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+    authorize_stream_proxy(&headers, query.token.as_deref())?;
+    validate_proxy_url(&query.url).await?;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -599,6 +605,130 @@ pub async fn stream_proxy(
     response_builder
         .body(Body::from(body_bytes))
         .map_err(|e| internal_error(anyhow::anyhow!("构建响应失败: {}", e)))
+}
+
+fn authorize_stream_proxy(
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let bearer_token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+
+    let token = bearer_token.or(query_token).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "unauthorized".to_string(),
+                details: Some("缺少认证 Token".to_string()),
+            }),
+        )
+    })?;
+
+    AuthService::verify_token(token).map_err(|e| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "unauthorized".to_string(),
+                details: Some(e.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(())
+}
+
+async fn validate_proxy_url(url: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let parsed = url::Url::parse(url).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_url".to_string(),
+                details: Some(format!("无效的 URL: {}", e)),
+            }),
+        )
+    })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_url".to_string(),
+                    details: Some("仅允许代理 HTTP/HTTPS 地址".to_string()),
+                }),
+            ));
+        }
+    }
+
+    let host = parsed.host_str().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_url".to_string(),
+                details: Some("URL 缺少主机名".to_string()),
+            }),
+        )
+    })?;
+
+    if is_disallowed_hostname(host) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "forbidden_target".to_string(),
+                details: Some("不允许代理本地或内网地址".to_string()),
+            }),
+        ));
+    }
+
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addresses = tokio::net::lookup_host((host, port)).await.map_err(|e| {
+        internal_error(anyhow::anyhow!("解析代理地址失败: {}", e))
+    })?;
+
+    for address in addresses {
+        if is_private_ip(address.ip()) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "forbidden_target".to_string(),
+                    details: Some("不允许代理本地或内网地址".to_string()),
+                }),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_disallowed_hostname(host: &str) -> bool {
+    let normalized = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".local")
+        || normalized.ends_with(".internal")
+}
+
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+                || v6.segments()[0] == 0x2001 && v6.segments()[1] == 0x0db8
+        }
+    }
 }
 
 // ===== 转码处理器 =====

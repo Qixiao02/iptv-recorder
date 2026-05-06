@@ -2,7 +2,7 @@
 
 use axum::{
     Router,
-    routing::{get, post, delete},
+    routing::{get, post},
     Extension,
     middleware,
 };
@@ -61,7 +61,7 @@ pub async fn create_router(
         .route("/", get(index_handler))
         // 登录
         .route("/api/auth/login", post(login))
-        // 流代理（直播流不需要认证）
+        // 流代理（播放器通过 token 参数鉴权）
         .route("/api/proxy/stream", get(stream_proxy))
         // HLS 文件（直播流不需要认证）
         .route("/api/transcode/hls/{session_id}/{filename}", get(get_hls_file))
