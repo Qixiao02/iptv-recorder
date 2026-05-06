@@ -77,6 +77,16 @@ async fn main() -> Result<()> {
     let event_bus = Arc::new(EventBus::default());
     info!("📡 Event Bus initialized");
 
+    let service_ctx = services::ServiceContext::new(db.clone(), config.clone());
+
+    // 启动自动清理任务
+    Arc::new(services::CleanupService::new(
+        service_ctx.clone(),
+        Some(event_bus.sender()),
+    ))
+    .start();
+    info!("🧹 Cleanup Service initialized");
+
     // 启动 Cron 调度器
     let scheduler = Arc::new(
         services::SchedulerManager::new(

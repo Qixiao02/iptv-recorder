@@ -17,13 +17,13 @@ use crate::core::ProcessManager;
 use crate::core::event::EventBus;
 use crate::models::{
     Channel, CreateChannelRequest, CreateScheduleRequest, ManualRecordRequest,
-    Schedule, Task, ErrorResponse, ImportM3UResponse,
+    Schedule, Task, ErrorResponse, ImportM3UResponse, AuditLog, SystemHealth, EpgSource, EpgProgram,
 };
 use crate::services::{
     ChannelService, ScheduleService, RecordingService, ServiceContext,
     M3UParser, CronTrigger, UpcomingTask, SchedulerManager,
     ConfigService, ConfigUpdateRequest, ChannelTestResult, PaginationParams,
-    AuthService, ImportChannelResult,
+    AuthService, ImportChannelResult, AuditService, CleanupService, EpgService, ImportEpgRequest, Claims,
 };
 
 /// 应用状态
@@ -33,6 +33,24 @@ pub type AppState = (
     Arc<ProcessManager>,
     Config,
 );
+
+async fn record_audit(
+    db: Pool<Sqlite>,
+    config: Config,
+    claims: Option<&Claims>,
+    action: &str,
+    resource_type: &str,
+    resource_id: Option<&str>,
+    details: Option<String>,
+) {
+    let service = AuditService::new(ServiceContext::new(db, config));
+    if let Err(e) = service
+        .record(claims, action, resource_type, resource_id, details.as_deref())
+        .await
+    {
+        tracing_error!("Failed to record audit log: {}", e);
+    }
+}
 
 /// 首页处理器
 pub async fn index_handler() -> &'static str {
@@ -76,14 +94,27 @@ pub async fn list_channels(
 }
 
 pub async fn create_channel(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Json(req): Json<CreateChannelRequest>,
 ) -> Result<Json<Channel>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ChannelService::new(ctx);
 
     match service.create(req).await {
-        Ok(channel) => Ok(Json(channel)),
+        Ok(channel) => {
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "channel.create",
+                "channel",
+                Some(&channel.id),
+                Some(format!("name={}", channel.name)),
+            )
+            .await;
+            Ok(Json(channel))
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
@@ -102,28 +133,36 @@ pub async fn get_channel(
 }
 
 pub async fn update_channel(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<CreateChannelRequest>,
 ) -> Result<Json<Channel>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ChannelService::new(ctx);
 
     match service.update(&id, req).await {
-        Ok(channel) => Ok(Json(channel)),
+        Ok(channel) => {
+            record_audit(db, config, Some(&claims), "channel.update", "channel", Some(&id), None).await;
+            Ok(Json(channel))
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
 
 pub async fn delete_channel(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ChannelService::new(ctx);
 
     match service.delete(&id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => {
+            record_audit(db, config, Some(&claims), "channel.delete", "channel", Some(&id), None).await;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
@@ -168,6 +207,7 @@ pub struct ImportM3URequest {
 
 /// 从 URL 导入 M3U
 pub async fn import_m3u_url(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Json(req): Json<ImportM3URequest>,
 ) -> Result<Json<ImportM3UResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -184,11 +224,23 @@ pub async fn import_m3u_url(
     })?;
 
     // 导入频道
-    import_channels(db, config, parse_result, req.overwrite).await
+    let response = import_channels(db.clone(), config.clone(), parse_result, req.overwrite).await?;
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "channel.import.url",
+        "channel",
+        None,
+        Some(format!("overwrite={}", req.overwrite)),
+    )
+    .await;
+    Ok(response)
 }
 
 /// 从内容导入 M3U
 pub async fn import_m3u_content(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Json(req): Json<ImportM3URequest>,
 ) -> Result<Json<ImportM3UResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -205,7 +257,18 @@ pub async fn import_m3u_content(
     })?;
 
     // 导入频道
-    import_channels(db, config, parse_result, req.overwrite).await
+    let response = import_channels(db.clone(), config.clone(), parse_result, req.overwrite).await?;
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "channel.import.content",
+        "channel",
+        None,
+        Some(format!("overwrite={}", req.overwrite)),
+    )
+    .await;
+    Ok(response)
 }
 
 /// 导入频道到数据库
@@ -267,6 +330,7 @@ pub async fn list_schedules(
 }
 
 pub async fn create_schedule(
+    Extension(claims): Extension<Claims>,
     State((db, scheduler, _process_manager, config)): State<AppState>,
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<Json<Schedule>, (StatusCode, Json<ErrorResponse>)> {
@@ -279,6 +343,17 @@ pub async fn create_schedule(
     if let Err(e) = scheduler.sync_schedule(&schedule).await {
         tracing_error!("Failed to sync schedule to scheduler: {}", e);
     }
+
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "schedule.create",
+        "schedule",
+        Some(&schedule.id),
+        Some(format!("channel_id={}", schedule.channel_id)),
+    )
+    .await;
 
     Ok(Json(schedule))
 }
@@ -297,6 +372,7 @@ pub async fn get_schedule(
 }
 
 pub async fn update_schedule(
+    Extension(claims): Extension<Claims>,
     State((db, scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<CreateScheduleRequest>,
@@ -311,14 +387,17 @@ pub async fn update_schedule(
         tracing_error!("Failed to sync updated schedule in scheduler: {}", e);
     }
 
+    record_audit(db, config, Some(&claims), "schedule.update", "schedule", Some(&id), None).await;
+
     Ok(Json(schedule))
 }
 
 pub async fn delete_schedule(
+    Extension(claims): Extension<Claims>,
     State((db, scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ScheduleService::new(ctx);
 
     match service.delete(&id).await {
@@ -326,6 +405,7 @@ pub async fn delete_schedule(
             if let Err(e) = scheduler.remove_schedule(&id).await {
                 tracing_error!("Failed to remove schedule from scheduler: {}", e);
             }
+            record_audit(db, config, Some(&claims), "schedule.delete", "schedule", Some(&id), None).await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => Err(internal_error(e)),
@@ -333,10 +413,11 @@ pub async fn delete_schedule(
 }
 
 pub async fn toggle_schedule(
+    Extension(claims): Extension<Claims>,
     State((db, scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Schedule>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config.clone());
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ScheduleService::new(ctx);
 
     service.toggle_enabled(&id).await.map_err(internal_error)?;
@@ -348,6 +429,16 @@ pub async fn toggle_schedule(
             if let Err(e) = scheduler.sync_schedule(&schedule).await {
                 tracing_error!("Failed to sync toggled schedule to scheduler: {}", e);
             }
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "schedule.toggle",
+                "schedule",
+                Some(&id),
+                Some(format!("enabled={}", schedule.enabled)),
+            )
+            .await;
 
             Ok(Json(schedule))
         }
@@ -383,20 +474,25 @@ pub async fn get_task(
 }
 
 pub async fn cancel_task(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = RecordingService::new(process_manager, ctx, None);
 
     match service.cancel(&id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => {
+            record_audit(db, config, Some(&claims), "task.cancel", "task", Some(&id), None).await;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
 
 /// 清除已完成的任务记录
 pub async fn clear_completed_tasks(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let ctx = ServiceContext::new(db.clone(), config.clone());
@@ -407,13 +503,26 @@ pub async fn clear_completed_tasks(
     let service = RecordingService::new(process_manager, ctx, None);
 
     match service.clear_completed_tasks().await {
-        Ok(count) => Ok(Json(serde_json::json!({ "deleted": count }))),
+        Ok(count) => {
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "task.clear_completed",
+                "task",
+                None,
+                Some(format!("deleted={count}")),
+            )
+            .await;
+            Ok(Json(serde_json::json!({ "deleted": count })))
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
 
 /// 删除单条任务记录
 pub async fn delete_task(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
@@ -425,21 +534,37 @@ pub async fn delete_task(
     let service = RecordingService::new(process_manager, ctx, None);
 
     match service.delete_task(&id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => {
+            record_audit(db, config, Some(&claims), "task.delete", "task", Some(&id), None).await;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
 
 pub async fn start_manual_record(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, process_manager, config)): State<AppState>,
     Extension(event_bus): Extension<Arc<EventBus>>,
     Json(req): Json<ManualRecordRequest>,
 ) -> Result<Json<Task>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = RecordingService::new(process_manager, ctx, Some(event_bus.sender()));
 
     match service.start_manual(req).await {
-        Ok(task) => Ok(Json(task)),
+        Ok(task) => {
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "task.manual_start",
+                "task",
+                Some(&task.id),
+                Some(format!("channel_id={}", task.channel_id)),
+            )
+            .await;
+            Ok(Json(task))
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
@@ -460,13 +585,17 @@ pub async fn get_upcoming(
 
 /// 重新加载调度器
 pub async fn reload_scheduler(
-    State((_db, scheduler, _process_manager, _config)): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    State((db, scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     match scheduler.reload().await {
-        Ok(_) => Ok(Json(serde_json::json!({
-            "status": "ok",
-            "message": "调度器已重新加载"
-        }))),
+        Ok(_) => {
+            record_audit(db, config, Some(&claims), "scheduler.reload", "scheduler", None, None).await;
+            Ok(Json(serde_json::json!({
+                "status": "ok",
+                "message": "调度器已重新加载"
+            })))
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
@@ -488,16 +617,113 @@ pub async fn get_config(
 
 /// 更新系统配置
 pub async fn update_config(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Json(req): Json<ConfigUpdateRequest>,
 ) -> Result<Json<crate::services::SystemConfig>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ConfigService::new(ctx);
 
     match service.update_config(req).await {
-        Ok(config) => Ok(Json(config)),
+        Ok(config_response) => {
+            record_audit(db, config, Some(&claims), "config.update", "config", None, None).await;
+            Ok(Json(config_response))
+        }
         Err(e) => Err(internal_error(e)),
     }
+}
+
+pub async fn get_system_health(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+) -> Result<Json<SystemHealth>, (StatusCode, Json<ErrorResponse>)> {
+    let service = AuditService::new(ServiceContext::new(db, config));
+    service.system_health().await.map(Json).map_err(internal_error)
+}
+
+pub async fn list_audit_logs(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+) -> Result<Json<Vec<AuditLog>>, (StatusCode, Json<ErrorResponse>)> {
+    let service = AuditService::new(ServiceContext::new(db, config));
+    service.list_recent(200).await.map(Json).map_err(internal_error)
+}
+
+pub async fn run_cleanup(
+    Extension(claims): Extension<Claims>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let cleanup = CleanupService::new(
+        ServiceContext::new(db.clone(), config.clone()),
+        Some(event_bus.sender()),
+    );
+    let deleted = cleanup.run_once().await.map_err(internal_error)?;
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "cleanup.run",
+        "cleanup",
+        None,
+        Some(format!("deleted={deleted}")),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "deleted": deleted,
+        "message": format!("已清理 {} 条过期任务记录", deleted)
+    })))
+}
+
+// ===== EPG 处理器 =====
+
+#[derive(Debug, Deserialize)]
+pub struct EpgProgramQuery {
+    pub channel_ref: String,
+    #[serde(default = "default_epg_limit")]
+    pub limit: i64,
+}
+
+fn default_epg_limit() -> i64 {
+    50
+}
+
+pub async fn list_epg_sources(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+) -> Result<Json<Vec<EpgSource>>, (StatusCode, Json<ErrorResponse>)> {
+    let service = EpgService::new(ServiceContext::new(db, config));
+    service.list_sources().await.map(Json).map_err(internal_error)
+}
+
+pub async fn import_epg_source(
+    Extension(claims): Extension<Claims>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Json(req): Json<ImportEpgRequest>,
+) -> Result<Json<EpgSource>, (StatusCode, Json<ErrorResponse>)> {
+    let service = EpgService::new(ServiceContext::new(db.clone(), config.clone()));
+    let source = service.import_source(req).await.map_err(internal_error)?;
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "epg.import",
+        "epg_source",
+        Some(&source.id),
+        Some(format!("name={}", source.name)),
+    )
+    .await;
+    Ok(Json(source))
+}
+
+pub async fn list_epg_programs(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Query(query): Query<EpgProgramQuery>,
+) -> Result<Json<Vec<EpgProgram>>, (StatusCode, Json<ErrorResponse>)> {
+    let service = EpgService::new(ServiceContext::new(db, config));
+    service
+        .list_programs(&query.channel_ref, query.limit)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 // ===== WebSocket 处理器 =====
@@ -883,7 +1109,6 @@ pub async fn get_hls_file(
 
 // ===== 认证处理器 =====
 
-use crate::services::Claims;
 use crate::models::{LoginRequest, LoginResponse, ChangePasswordRequest, UserInfo};
 use axum::Json as AxumJson;
 

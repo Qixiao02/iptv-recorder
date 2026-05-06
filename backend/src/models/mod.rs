@@ -6,10 +6,56 @@
 
 mod user;
 
-pub use user::{User, LoginRequest, LoginResponse, UserInfo, ChangePasswordRequest};
+pub use user::{User, UserRole, LoginRequest, LoginResponse, UserInfo, ChangePasswordRequest};
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AuditLog {
+    pub id: String,
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub role: Option<String>,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: Option<String>,
+    pub details: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemHealth {
+    pub users_total: i64,
+    pub channels_total: i64,
+    pub schedules_total: i64,
+    pub enabled_schedules: i64,
+    pub running_tasks: i64,
+    pub failed_tasks_24h: i64,
+    pub last_audit_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EpgSource {
+    pub id: String,
+    pub name: String,
+    pub source_url: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EpgProgram {
+    pub id: String,
+    pub source_id: String,
+    pub channel_ref: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub start_at: String,
+    pub end_at: String,
+    pub created_at: String,
+}
 
 /// 频道信息
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

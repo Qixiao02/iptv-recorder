@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::services::AuthService;
+use crate::services::{AuthService, Claims};
 
 /// 错误响应
 #[derive(Serialize)]
@@ -57,4 +57,60 @@ pub async fn auth_middleware(
             }),
         )),
     }
+}
+
+/// 需要 operator/admin 权限的中间件
+pub async fn operator_middleware(
+    request: Request,
+    next: Next,
+) -> Result<axum::response::Response, (StatusCode, Json<AuthError>)> {
+    let claims = request.extensions().get::<Claims>().cloned().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthError {
+                error: "unauthorized".to_string(),
+                details: Some("缺少认证上下文".to_string()),
+            }),
+        )
+    })?;
+
+    if !claims.can_manage_content() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(AuthError {
+                error: "forbidden".to_string(),
+                details: Some("需要 operator 或 admin 权限".to_string()),
+            }),
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
+
+/// 需要 admin 权限的中间件
+pub async fn admin_middleware(
+    request: Request,
+    next: Next,
+) -> Result<axum::response::Response, (StatusCode, Json<AuthError>)> {
+    let claims = request.extensions().get::<Claims>().cloned().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthError {
+                error: "unauthorized".to_string(),
+                details: Some("缺少认证上下文".to_string()),
+            }),
+        )
+    })?;
+
+    if !claims.can_manage_security() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(AuthError {
+                error: "forbidden".to_string(),
+                details: Some("需要 admin 权限".to_string()),
+            }),
+        ));
+    }
+
+    Ok(next.run(request).await)
 }

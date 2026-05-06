@@ -1,6 +1,49 @@
 //! 用户模型
 
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+
+/// 用户角色
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Viewer,
+    Operator,
+    Admin,
+}
+
+impl UserRole {
+    pub fn can_manage_content(self) -> bool {
+        matches!(self, Self::Operator | Self::Admin)
+    }
+
+    pub fn can_manage_security(self) -> bool {
+        matches!(self, Self::Admin)
+    }
+}
+
+impl fmt::Display for UserRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Viewer => write!(f, "viewer"),
+            Self::Operator => write!(f, "operator"),
+            Self::Admin => write!(f, "admin"),
+        }
+    }
+}
+
+impl FromStr for UserRole {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "viewer" => Ok(Self::Viewer),
+            "operator" => Ok(Self::Operator),
+            "admin" => Ok(Self::Admin),
+            _ => Err(()),
+        }
+    }
+}
 
 /// 用户
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

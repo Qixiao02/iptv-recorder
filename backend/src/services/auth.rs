@@ -7,7 +7,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 
-use crate::models::{User, LoginRequest, LoginResponse, ChangePasswordRequest};
+use crate::models::{User, UserRole, LoginRequest, LoginResponse, ChangePasswordRequest};
 
 /// JWT 配置
 const JWT_EXPIRATION_HOURS: i64 = 24;
@@ -35,6 +35,20 @@ pub struct Claims {
     pub role: String,
     pub exp: usize,       // expiration time
     pub iat: usize,       // issued at
+}
+
+impl Claims {
+    pub fn role(&self) -> UserRole {
+        self.role.parse().unwrap_or(UserRole::Viewer)
+    }
+
+    pub fn can_manage_content(&self) -> bool {
+        self.role().can_manage_content()
+    }
+
+    pub fn can_manage_security(&self) -> bool {
+        self.role().can_manage_security()
+    }
 }
 
 /// 认证服务

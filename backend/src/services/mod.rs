@@ -11,6 +11,9 @@ pub mod config_service;
 pub mod transcode;
 pub mod post_process;
 pub mod auth;
+pub mod audit;
+pub mod cleanup;
+pub mod epg;
 
 pub use channel::{ChannelService, ChannelTestResult, ImportChannelResult, PaginationParams};
 pub use schedule::ScheduleService;
@@ -21,6 +24,9 @@ pub use config_service::{ConfigService, SystemConfig, ConfigUpdateRequest};
 pub use transcode::TranscodeService;
 pub use post_process::PostProcessor;
 pub use auth::{AuthService, Claims};
+pub use audit::AuditService;
+pub use cleanup::CleanupService;
+pub use epg::{EpgService, ImportEpgRequest};
 
 use crate::config::Config;
 use sqlx::{Pool, Sqlite};
