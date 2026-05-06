@@ -134,6 +134,8 @@ impl SchedulerManager {
         let audio_quality_for_job = schedule.audio_quality.clone();
         let max_speed_for_job = schedule.max_speed.clone();
         let thread_count_for_job = schedule.thread_count;
+        let transcode_mode_for_job = schedule.transcode_mode.clone();
+        let transcode_preset_for_job = schedule.transcode_preset.clone();
         let schedule_name_for_job = schedule.name.clone();
 
         // 创建定时任务
@@ -150,6 +152,8 @@ impl SchedulerManager {
             let audio_quality = audio_quality_for_job.clone();
             let max_speed = max_speed_for_job.clone();
             let thread_count = thread_count_for_job;
+            let transcode_mode = transcode_mode_for_job.clone();
+            let transcode_preset = transcode_preset_for_job.clone();
             let schedule_name = schedule_name_for_job.clone();
 
             Box::pin(async move {
@@ -160,14 +164,16 @@ impl SchedulerManager {
 
                 let req = ManualRecordRequest {
                     channel_id,
-                    duration_seconds,
+                    duration_seconds: Some(duration_seconds),
                     output_name: Some(schedule_name.clone()),
                     output_dir,
                     output_template: Some(output_template),
                     video_quality,
                     audio_quality,
                     max_speed,
-                    thread_count,
+                    thread_count: Some(thread_count),
+                    transcode_mode: Some(transcode_mode),
+                    transcode_preset: Some(transcode_preset),
                 };
 
                 match service.start_manual(req).await {
@@ -195,6 +201,17 @@ impl SchedulerManager {
 
         info!("✅ 已添加计划: {} ({})", schedule.name, cron_expr_6field);
         Ok(())
+    }
+
+    /// 同步单个计划到调度器
+    ///
+    /// 启用状态会注册或更新 job，禁用状态会移除已有 job。
+    pub async fn sync_schedule(&self, schedule: &crate::models::Schedule) -> Result<()> {
+        if schedule.enabled {
+            self.add_schedule(schedule).await
+        } else {
+            self.remove_schedule(&schedule.id).await
+        }
     }
 
     /// 移除计划

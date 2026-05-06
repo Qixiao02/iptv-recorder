@@ -231,16 +231,15 @@ async fn import_channels(
             logo_url: channel.logo.clone(),
         };
 
-        match service.create(create_req).await {
-            Ok(_) => imported += 1,
+        match service.import_channel(create_req, overwrite).await {
+            Ok(ImportChannelResult::Created) | Ok(ImportChannelResult::Updated) => imported += 1,
+            Ok(ImportChannelResult::Skipped) => {
+                skipped += 1;
+                errors.push(format!("频道 {} 已存在，已跳过", channel.name));
+            }
             Err(e) => {
-                if e.to_string().contains("UNIQUE") {
-                    skipped += 1;
-                    errors.push(format!("频道 {} 已存在", channel.name));
-                } else {
-                    failed += 1;
-                    errors.push(format!("频道 {} 导入失败: {}", channel.name, e));
-                }
+                failed += 1;
+                errors.push(format!("频道 {} 导入失败: {}", channel.name, e));
             }
         }
     }
@@ -277,10 +276,8 @@ pub async fn create_schedule(
     let schedule = service.create(req.clone()).await.map_err(internal_error)?;
 
     // 添加到调度器
-    if schedule.enabled {
-        if let Err(e) = scheduler.add_schedule(&schedule).await {
-            tracing_error!("Failed to add schedule to scheduler: {}", e);
-        }
+    if let Err(e) = scheduler.sync_schedule(&schedule).await {
+        tracing_error!("Failed to sync schedule to scheduler: {}", e);
     }
 
     Ok(Json(schedule))
@@ -309,23 +306,28 @@ pub async fn update_schedule(
 
     let schedule = service.update(&id, req.clone()).await.map_err(internal_error)?;
 
-    // 重新添加到调度器
-    if let Err(e) = scheduler.add_schedule(&schedule).await {
-        tracing_error!("Failed to update schedule in scheduler: {}", e);
+    // 同步到调度器，确保禁用状态会移除旧 job
+    if let Err(e) = scheduler.sync_schedule(&schedule).await {
+        tracing_error!("Failed to sync updated schedule in scheduler: {}", e);
     }
 
     Ok(Json(schedule))
 }
 
 pub async fn delete_schedule(
-    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    State((db, scheduler, _process_manager, config)): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let ctx = ServiceContext::new(db, config);
     let service = ScheduleService::new(ctx);
 
     match service.delete(&id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => {
+            if let Err(e) = scheduler.remove_schedule(&id).await {
+                tracing_error!("Failed to remove schedule from scheduler: {}", e);
+            }
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(e) => Err(internal_error(e)),
     }
 }
@@ -337,16 +339,14 @@ pub async fn toggle_schedule(
     let ctx = ServiceContext::new(db, config.clone());
     let service = ScheduleService::new(ctx);
 
-    let new_enabled = service.toggle_enabled(&id).await.map_err(internal_error)?;
+    service.toggle_enabled(&id).await.map_err(internal_error)?;
 
     // 重新获取更新后的计划
     match service.get_by_id(&id).await {
         Ok(schedule) => {
-            // 如果启用，添加到调度器
-            if new_enabled {
-                if let Err(e) = scheduler.add_schedule(&schedule).await {
-                    tracing_error!("Failed to add schedule to scheduler: {}", e);
-                }
+            // 同步到调度器，确保开关状态和内存 job 一致
+            if let Err(e) = scheduler.sync_schedule(&schedule).await {
+                tracing_error!("Failed to sync toggled schedule to scheduler: {}", e);
             }
 
             Ok(Json(schedule))
