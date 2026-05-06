@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSchedules, deleteSchedule, toggleSchedule } from '@/api/schedules';
 import { startManualRecord } from '@/api/tasks';
+import { upsertTaskCache } from '@/lib/taskRealtime';
 import {
   Plus,
   CalendarClock,
@@ -98,7 +99,8 @@ export const Schedules: React.FC = () => {
 
   const executeMutation = useMutation({
     mutationFn: startManualRecord,
-    onSuccess: () => {
+    onSuccess: (task) => {
+      upsertTaskCache(queryClient, task);
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       setExecutingId(null);
     },

@@ -8,6 +8,13 @@ import type {
 import { getStoredAuthToken } from '@/stores/authStore';
 
 export type WsEventHandler<T = unknown> = (data: T) => void;
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'unauthorized'
+  | 'disconnected';
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
@@ -15,6 +22,7 @@ export class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private handlers: Map<string, Set<WsEventHandler>> = new Map();
   private shouldReconnect = false;
+  private connectionState: ConnectionState = 'idle';
 
   constructor() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -28,6 +36,7 @@ export class WebSocketClient {
     const token = getStoredAuthToken();
     if (!token) {
       this.shouldReconnect = false;
+      this.setConnectionState('idle');
       return;
     }
 
@@ -39,10 +48,17 @@ export class WebSocketClient {
     }
 
     this.shouldReconnect = true;
+    const isReconnectAttempt = this.reconnectTimer !== null;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.setConnectionState(isReconnectAttempt ? 'reconnecting' : 'connecting');
     const wsUrl = token ? `${this.url}?token=${encodeURIComponent(token)}` : this.url;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
+      this.setConnectionState('connected');
       console.log('WebSocket connected');
     };
 
@@ -58,15 +74,18 @@ export class WebSocketClient {
     this.ws.onclose = (event) => {
       this.ws = null;
       if (!this.shouldReconnect || !getStoredAuthToken()) {
+        this.setConnectionState('disconnected');
         return;
       }
 
       if (event.code === 1008) {
         console.warn('WebSocket authentication failed, stop reconnecting.');
         this.shouldReconnect = false;
+        this.setConnectionState('unauthorized');
         return;
       }
 
+      this.setConnectionState('reconnecting');
       console.log('WebSocket disconnected, reconnecting in 3s...');
       this.reconnectTimer = setTimeout(() => this.connect(), 3000);
     };
@@ -84,6 +103,11 @@ export class WebSocketClient {
     }
     this.ws?.close();
     this.ws = null;
+    this.setConnectionState('disconnected');
+  }
+
+  getConnectionState(): ConnectionState {
+    return this.connectionState;
   }
 
   on<T = unknown>(event: string, handler: WsEventHandler<T>): () => void {
@@ -108,6 +132,15 @@ export class WebSocketClient {
     });
   }
 
+  private setConnectionState(nextState: ConnectionState): void {
+    if (this.connectionState === nextState) {
+      return;
+    }
+
+    this.connectionState = nextState;
+    this.emit('__connection_state__', nextState);
+  }
+
   // 便捷方法
   onTaskUpdate(handler: WsEventHandler<TaskUpdateData>): () => void {
     return this.on('task.update', handler);
@@ -123,6 +156,11 @@ export class WebSocketClient {
 
   onSystemAlert(handler: WsEventHandler<SystemAlertData>): () => void {
     return this.on('system.alert', handler);
+  }
+
+  onConnectionStateChange(handler: WsEventHandler<ConnectionState>): () => void {
+    handler(this.connectionState);
+    return this.on('__connection_state__', handler);
   }
 }
 

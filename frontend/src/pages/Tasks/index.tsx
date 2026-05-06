@@ -1,8 +1,9 @@
-import React, { Suspense, lazy, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask, clearCompletedTasks, deleteTask } from '@/api/tasks';
 import { getAllChannels } from '@/api/channels';
+import { wsClient, type ConnectionState } from '@/api/websocket';
 import {
   Clapperboard,
   CircleDot,
@@ -15,8 +16,9 @@ import {
   ChevronRight,
   AlertCircle,
   Trash2,
+  Radio,
 } from 'lucide-react';
-import type { TaskStatus, Task } from '@/types';
+import type { TaskStatus } from '@/types';
 import './Tasks.css';
 
 const TaskDetailModal = lazy(() => import('@/components/TaskDetailModal'));
@@ -36,12 +38,15 @@ export const Tasks: React.FC = () => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; taskId: string | null }>({
     isOpen: false,
     taskId: null,
   });
   const [clearConfirm, setClearConfirm] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    wsClient.getConnectionState(),
+  );
 
   const { data: tasks, isLoading, refetch } = useQuery({
     queryKey: ['tasks'],
@@ -53,14 +58,21 @@ export const Tasks: React.FC = () => {
     queryFn: getAllChannels,
   });
 
+  useEffect(() => wsClient.onConnectionStateChange(setConnectionState), []);
+
   // 创建 channel_id -> channel_name 映射
-  const channelMap = React.useMemo(() => {
+  const channelMap = useMemo(() => {
     const map = new Map<string, string>();
     channels?.forEach((ch) => {
       map.set(ch.id, ch.name);
     });
     return map;
   }, [channels]);
+
+  const selectedTask = useMemo(
+    () => tasks?.find((task) => task.id === selectedTaskId) ?? null,
+    [tasks, selectedTaskId],
+  );
 
   const cancelMutation = useMutation({
     mutationFn: cancelTask,
@@ -114,6 +126,15 @@ export const Tasks: React.FC = () => {
   const shouldRenderTaskDetail = selectedTask !== null;
   const shouldRenderDeleteConfirm = deleteConfirm.isOpen;
   const shouldRenderClearConfirm = clearConfirm;
+  const isLive = connectionState === 'connected';
+  const liveLabel = {
+    idle: '未连接',
+    connecting: '正在连接实时通道',
+    connected: '实时同步中',
+    reconnecting: '重连实时通道中',
+    unauthorized: '实时认证失效',
+    disconnected: '实时连接已断开',
+  }[connectionState];
 
   return (
     <div className="tasks-page">
@@ -124,6 +145,10 @@ export const Tasks: React.FC = () => {
           <p className="page-subtitle">录制任务执行历史</p>
         </div>
         <div className="page-actions">
+          <div className={`live-pill ${isLive ? 'connected' : 'offline'}`}>
+            <Radio size={14} />
+            {liveLabel}
+          </div>
           <button
             className="btn btn-ghost"
             onClick={() => setClearConfirm(true)}
@@ -265,7 +290,7 @@ export const Tasks: React.FC = () => {
                       {task.status === 'completed' && (
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => setSelectedTask(task)}
+                          onClick={() => setSelectedTaskId(task.id)}
                         >
                           <Eye size={14} />
                           查看
@@ -275,7 +300,7 @@ export const Tasks: React.FC = () => {
                         <div
                           className="error-info clickable"
                           title={task.error_message}
-                          onClick={() => setSelectedTask(task)}
+                          onClick={() => setSelectedTaskId(task.id)}
                         >
                           <AlertCircle size={16} className="error-icon" />
                         </div>
@@ -291,7 +316,7 @@ export const Tasks: React.FC = () => {
                   )}
                   <button
                     className="action-btn"
-                    onClick={() => setSelectedTask(task)}
+                    onClick={() => setSelectedTaskId(task.id)}
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -318,7 +343,7 @@ export const Tasks: React.FC = () => {
         {shouldRenderTaskDetail && (
           <TaskDetailModal
             isOpen
-            onClose={() => setSelectedTask(null)}
+            onClose={() => setSelectedTaskId(null)}
             task={selectedTask}
             channelName={selectedTask ? channelMap.get(selectedTask.channel_id) : undefined}
           />

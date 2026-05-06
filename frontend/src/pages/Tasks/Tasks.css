@@ -4,7 +4,33 @@
 
 .page-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.live-pill.connected {
+  color: var(--color-success);
+  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.live-pill.offline {
+  color: var(--color-warning);
+  border-color: rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 /* Stats Bar */
@@ -301,6 +327,10 @@
 
 /* Responsive */
 @media (max-width: 768px) {
+  .page-actions {
+    flex-wrap: wrap;
+  }
+
   .task-card {
     flex-direction: column;
     align-items: flex-start;

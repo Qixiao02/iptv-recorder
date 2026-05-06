@@ -9,6 +9,7 @@ import { initTheme } from '@/stores/themeStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { Channel, Task, TaskProgressData, TaskUpdateData, ChannelStatusData, SystemAlertData } from '@/types';
+import { applyTaskProgressUpdate, applyTaskStatusUpdate, patchTaskCache } from '@/lib/taskRealtime';
 import '@/locales/index';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -81,44 +82,21 @@ function App() {
     }
 
     const updateTaskCache = (updater: (tasks: Task[]) => Task[]) => {
-      queryClient.setQueryData<Task[]>(['tasks'], (current) => {
-        if (!current) {
-          return current;
-        }
-        return updater(current);
-      });
+      return patchTaskCache(queryClient, updater);
     };
 
     const unsubscribeProgress = wsClient.onTaskProgress((progress: TaskProgressData) => {
-      updateTaskCache((tasks) =>
-        tasks.map((task) =>
-          task.id === progress.task_id
-            ? {
-                ...task,
-                progress_percent: progress.percent,
-                current_speed: progress.speed || task.current_speed,
-                file_size: Number(progress.downloaded_bytes) || task.file_size,
-              }
-            : task
-        )
-      );
+      const changed = updateTaskCache((tasks) => applyTaskProgressUpdate(tasks, progress));
+      if (!changed) {
+        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      }
     });
 
     const unsubscribeUpdate = wsClient.onTaskUpdate((update: TaskUpdateData) => {
-      updateTaskCache((tasks) =>
-        tasks.map((task) =>
-          task.id === update.task_id
-            ? {
-                ...task,
-                status: update.status,
-                error_message: update.error_message,
-                progress_percent: update.status === 'completed' ? 100 : task.progress_percent,
-              }
-            : task
-        )
-      );
-
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      const changed = updateTaskCache((tasks) => applyTaskStatusUpdate(tasks, update));
+      if (!changed || update.status !== 'running') {
+        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      }
     });
 
     const unsubscribeChannelStatus = wsClient.onChannelStatus((update: ChannelStatusData) => {
@@ -155,11 +133,18 @@ function App() {
       addAlert(alert);
     });
 
+    const unsubscribeConnection = wsClient.onConnectionStateChange((state) => {
+      if (state === 'connected') {
+        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      }
+    });
+
     return () => {
       unsubscribeProgress();
       unsubscribeUpdate();
       unsubscribeChannelStatus();
       unsubscribeAlert();
+      unsubscribeConnection();
     };
   }, [isAuthenticated, addAlert]);
 

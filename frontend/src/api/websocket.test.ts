@@ -60,4 +60,26 @@ describe('WebSocketClient', () => {
 
     expect(MockWebSocket.instances).toHaveLength(1);
   });
+
+  it('emits connection state changes across the socket lifecycle', () => {
+    localStorage.setItem(
+      'auth-storage',
+      JSON.stringify({ state: { token: 'token-123' } }),
+    );
+
+    const client = new WebSocketClient();
+    const states: string[] = [];
+    const unsubscribe = client.onConnectionStateChange((state) => {
+      states.push(state);
+    });
+
+    client.connect();
+    MockWebSocket.instances[0].onopen?.();
+    MockWebSocket.instances[0].onclose?.({ code: 1006 } as CloseEvent);
+    vi.advanceTimersByTime(3000);
+
+    expect(states).toEqual(['idle', 'connecting', 'connected', 'reconnecting']);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    unsubscribe();
+  });
 });

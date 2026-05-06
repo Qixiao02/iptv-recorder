@@ -157,7 +157,6 @@ export const Dashboard: React.FC = () => {
   const { data: tasks, isLoading: tasksLoading, refetch } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 5000,
   });
 
   const { data: upcoming, isLoading: upcomingLoading } = useQuery({
