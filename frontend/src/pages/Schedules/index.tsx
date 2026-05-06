@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSchedules, deleteSchedule, toggleSchedule } from '@/api/schedules';
 import { startManualRecord } from '@/api/tasks';
-import { ScheduleModal } from '@/components/ScheduleModal';
 import {
   Plus,
   CalendarClock,
@@ -18,6 +17,8 @@ import {
 } from 'lucide-react';
 import type { Schedule } from '@/types';
 import './Schedules.css';
+
+const ScheduleModal = lazy(() => import('@/components/ScheduleModal'));
 
 const CronDescription: React.FC<{ expression: string }> = ({ expression }) => {
   const parts = expression.trim().split(/\s+/);
@@ -141,6 +142,8 @@ export const Schedules: React.FC = () => {
     }
     return `${minutes}分钟`;
   };
+
+  const shouldRenderScheduleModal = showModal || editingSchedule !== null;
 
   return (
     <div className="schedules-page">
@@ -288,11 +291,15 @@ export const Schedules: React.FC = () => {
       )}
 
       {/* Schedule Modal */}
-      <ScheduleModal
-        isOpen={showModal}
-        onClose={handleCloseModal}
-        schedule={editingSchedule}
-      />
+      <Suspense fallback={null}>
+        {shouldRenderScheduleModal && (
+          <ScheduleModal
+            isOpen={showModal}
+            onClose={handleCloseModal}
+            schedule={editingSchedule}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };

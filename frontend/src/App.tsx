@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect, type ReactNode } from 'react';
 import { RouterProvider, createBrowserRouter, Navigate } from 'react-router-dom';
 import { ConfigProvider, App as AntdApp } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
@@ -6,18 +6,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import Dashboard from '@/pages/Dashboard';
-import Channels from '@/pages/Channels';
-import Schedules from '@/pages/Schedules';
-import Tasks from '@/pages/Tasks';
-import Settings from '@/pages/Settings';
-import Login from '@/pages/Login';
 import { wsClient } from '@/api/websocket';
 import { initTheme } from '@/stores/themeStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { Channel, Task, TaskProgressData, TaskUpdateData, ChannelStatusData, SystemAlertData } from '@/types';
 import '@/locales/index';
+
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Channels = lazy(() => import('@/pages/Channels'));
+const Schedules = lazy(() => import('@/pages/Schedules'));
+const Tasks = lazy(() => import('@/pages/Tasks'));
+const Settings = lazy(() => import('@/pages/Settings'));
+const Login = lazy(() => import('@/pages/Login'));
 
 // 初始化主题
 initTheme();
@@ -31,10 +32,18 @@ const queryClient = new QueryClient({
   },
 });
 
+const RouteFallback = () => <div className="page-loading">Loading...</div>;
+
+const withSuspense = (element: ReactNode) => (
+  <Suspense fallback={<RouteFallback />}>
+    {element}
+  </Suspense>
+);
+
 const router = createBrowserRouter([
   {
     path: '/login',
-    element: <Login />,
+    element: withSuspense(<Login />),
   },
   {
     path: '/',
@@ -45,11 +54,11 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
-      { path: 'dashboard', element: <Dashboard /> },
-      { path: 'channels', element: <Channels /> },
-      { path: 'schedules', element: <Schedules /> },
-      { path: 'tasks', element: <Tasks /> },
-      { path: 'settings', element: <Settings /> },
+      { path: 'dashboard', element: withSuspense(<Dashboard />) },
+      { path: 'channels', element: withSuspense(<Channels />) },
+      { path: 'schedules', element: withSuspense(<Schedules />) },
+      { path: 'tasks', element: withSuspense(<Tasks />) },
+      { path: 'settings', element: withSuspense(<Settings />) },
     ],
   },
 ]);

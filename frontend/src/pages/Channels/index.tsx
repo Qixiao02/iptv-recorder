@@ -1,10 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getChannels, getChannelGroups, deleteChannel, testChannel } from '@/api/channels';
-import { ImportM3UModal } from '@/components/ImportM3UModal';
-import { ChannelModal } from '@/components/ChannelModal';
-import { PlayerModal } from '@/components/PlayerModal';
 import {
   Search,
   Plus,
@@ -26,6 +23,10 @@ import {
 } from 'lucide-react';
 import type { Channel } from '@/types';
 import './Channels.css';
+
+const ImportM3UModal = lazy(() => import('@/components/ImportM3UModal'));
+const ChannelModal = lazy(() => import('@/components/ChannelModal'));
+const PlayerModal = lazy(() => import('@/components/PlayerModal'));
 
 type ViewMode = 'table' | 'card';
 
@@ -267,6 +268,10 @@ export const Channels: React.FC = () => {
       </div>
     );
   };
+
+  const shouldRenderImportModal = showImportModal;
+  const shouldRenderChannelModal = showChannelModal || editingChannel !== null;
+  const shouldRenderPlayerModal = playerChannel !== null;
 
   return (
     <div className="channels-page">
@@ -549,27 +554,32 @@ export const Channels: React.FC = () => {
       {/* Pagination */}
       {renderPagination()}
 
-      {/* Import M3U Modal */}
-      <ImportM3UModal
-        isOpen={showImportModal}
-        onClose={() => setShowImportModal(false)}
-      />
+      <Suspense fallback={null}>
+        {shouldRenderImportModal && (
+          <ImportM3UModal
+            isOpen={showImportModal}
+            onClose={() => setShowImportModal(false)}
+          />
+        )}
 
-      {/* Channel Modal */}
-      <ChannelModal
-        isOpen={showChannelModal}
-        onClose={handleCloseChannelModal}
-        channel={editingChannel}
-      />
+        {shouldRenderChannelModal && (
+          <ChannelModal
+            isOpen={showChannelModal}
+            onClose={handleCloseChannelModal}
+            channel={editingChannel}
+          />
+        )}
 
-      {/* Player Modal */}
-      <PlayerModal
-        isOpen={!!playerChannel}
-        onClose={() => setPlayerChannel(null)}
-        channelId={playerChannel?.id || ''}
-        channelName={playerChannel?.name || ''}
-        channelUrl={playerChannel?.url || ''}
-      />
+        {shouldRenderPlayerModal && playerChannel && (
+          <PlayerModal
+            isOpen
+            onClose={() => setPlayerChannel(null)}
+            channelId={playerChannel.id}
+            channelName={playerChannel.name}
+            channelUrl={playerChannel.url}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import Hls from 'hls.js';
+import Hls, { type ErrorData } from 'hls.js/light';
 import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
 import { getStoredAuthToken } from '@/stores/authStore';
@@ -139,7 +139,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           video.play().catch(() => {});
         });
 
-        hls.on(Hls.Events.ERROR, (_, data) => {
+        hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
           if (data.fatal) {
             console.error('HLS Error:', data);
             setError(`播放失败: ${data.type} - ${data.details}`);
@@ -189,7 +189,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         video.play().catch(() => {});
       });
 
-      hls.on(Hls.Events.ERROR, (_, data) => {
+      hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (data.fatal) {
           console.error('HLS Error:', data);
           setError(`播放失败: ${data.type} - ${data.details}`);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask, clearCompletedTasks, deleteTask } from '@/api/tasks';
@@ -17,9 +17,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { TaskStatus, Task } from '@/types';
-import { TaskDetailModal } from '@/components/TaskDetailModal';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
 import './Tasks.css';
+
+const TaskDetailModal = lazy(() => import('@/components/TaskDetailModal'));
+const ConfirmDialog = lazy(() => import('@/components/ConfirmDialog'));
 
 type FilterStatus = 'all' | TaskStatus;
 
@@ -110,6 +111,10 @@ export const Tasks: React.FC = () => {
     }
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
+
+  const shouldRenderTaskDetail = selectedTask !== null;
+  const shouldRenderDeleteConfirm = deleteConfirm.isOpen;
+  const shouldRenderClearConfirm = clearConfirm;
 
   return (
     <div className="tasks-page">
@@ -310,37 +315,42 @@ export const Tasks: React.FC = () => {
         </div>
       )}
 
-      {/* Task Detail Modal */}
-      <TaskDetailModal
-        isOpen={!!selectedTask}
-        onClose={() => setSelectedTask(null)}
-        task={selectedTask}
-        channelName={selectedTask ? channelMap.get(selectedTask.channel_id) : undefined}
-      />
+      <Suspense fallback={null}>
+        {shouldRenderTaskDetail && (
+          <TaskDetailModal
+            isOpen
+            onClose={() => setSelectedTask(null)}
+            task={selectedTask}
+            channelName={selectedTask ? channelMap.get(selectedTask.channel_id) : undefined}
+          />
+        )}
 
-      {/* Delete Confirm Dialog */}
-      <ConfirmDialog
-        isOpen={deleteConfirm.isOpen}
-        onClose={() => setDeleteConfirm({ isOpen: false, taskId: null })}
-        onConfirm={() => deleteConfirm.taskId && deleteMutation.mutate(deleteConfirm.taskId)}
-        title="删除任务记录"
-        message="确定要删除此任务记录吗？此操作无法撤销。"
-        confirmText="删除"
-        type="danger"
-        isLoading={deleteMutation.isPending}
-      />
+        {shouldRenderDeleteConfirm && (
+          <ConfirmDialog
+            isOpen={deleteConfirm.isOpen}
+            onClose={() => setDeleteConfirm({ isOpen: false, taskId: null })}
+            onConfirm={() => deleteConfirm.taskId && deleteMutation.mutate(deleteConfirm.taskId)}
+            title="删除任务记录"
+            message="确定要删除此任务记录吗？此操作无法撤销。"
+            confirmText="删除"
+            type="danger"
+            isLoading={deleteMutation.isPending}
+          />
+        )}
 
-      {/* Clear Confirm Dialog */}
-      <ConfirmDialog
-        isOpen={clearConfirm}
-        onClose={() => setClearConfirm(false)}
-        onConfirm={() => clearMutation.mutate()}
-        title="清除任务记录"
-        message="确定要清除所有已完成、失败和取消的任务记录吗？此操作无法撤销。"
-        confirmText="清除"
-        type="warning"
-        isLoading={clearMutation.isPending}
-      />
+        {shouldRenderClearConfirm && (
+          <ConfirmDialog
+            isOpen={clearConfirm}
+            onClose={() => setClearConfirm(false)}
+            onConfirm={() => clearMutation.mutate()}
+            title="清除任务记录"
+            message="确定要清除所有已完成、失败和取消的任务记录吗？此操作无法撤销。"
+            confirmText="清除"
+            type="warning"
+            isLoading={clearMutation.isPending}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };
