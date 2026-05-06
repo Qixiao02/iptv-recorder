@@ -100,6 +100,21 @@ scheduler:
 
 ## 环境变量
 
+### 安全相关环境变量
+
+以下环境变量建议在首次启动前配置：
+
+| 环境变量 | 必填 | 说明 |
+|---------|------|------|
+| `IPTV_JWT_SECRET` | 是 | JWT 签名密钥，至少 32 位字符；未配置时后端拒绝启动 |
+| `IPTV_INITIAL_ADMIN_PASSWORD` | 否 | 首次创建 `admin` 账号时使用的初始密码，建议至少 8 位 |
+
+```bash
+# Linux/macOS
+export IPTV_JWT_SECRET='replace-with-a-random-secret-at-least-32-chars'
+export IPTV_INITIAL_ADMIN_PASSWORD='replace-with-a-strong-admin-password'
+```
+
 ### 命名规则
 
 环境变量使用 `IPTV__` 前缀，双下划线表示嵌套：
@@ -132,14 +147,17 @@ IPTV__SECTION__KEY=value
 # Linux/macOS
 export IPTV__SERVER__PORT=8080
 export IPTV__RECORDER__MAX_CONCURRENT=10
+export IPTV_JWT_SECRET='replace-with-a-random-secret-at-least-32-chars'
 
 # Windows (CMD)
 set IPTV__SERVER__PORT=8080
 set IPTV__RECORDER__MAX_CONCURRENT=10
+set IPTV_JWT_SECRET=replace-with-a-random-secret-at-least-32-chars
 
 # Windows (PowerShell)
 $env:IPTV__SERVER__PORT=8080
 $env:IPTV__RECORDER__MAX_CONCURRENT=10
+$env:IPTV_JWT_SECRET="replace-with-a-random-secret-at-least-32-chars"
 ```
 
 ## 配置项详解

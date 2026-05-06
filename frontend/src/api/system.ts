@@ -1,6 +1,25 @@
 import apiClient from './client';
 import type { UpcomingTask, SystemConfig } from '@/types';
 
+export interface ConfigUpdateRequest {
+  storage?: {
+    recordings_path?: string;
+    auto_cleanup_days?: number;
+    min_free_space_gb?: number;
+  };
+  recording?: {
+    default_duration_minutes?: number;
+    n_m3u8dl_re_path?: string;
+    max_retry?: number;
+    thread_count?: number;
+  };
+  notification?: {
+    on_complete?: boolean;
+    on_failure?: boolean;
+    disk_warning?: boolean;
+  };
+}
+
 // 获取即将执行的任务
 export const getUpcoming = (): Promise<UpcomingTask[]> => {
   return apiClient.get('/scheduler/upcoming').then((res) => res.data);
@@ -17,6 +36,6 @@ export const getConfig = (): Promise<SystemConfig> => {
 };
 
 // 更新系统配置
-export const updateConfig = (data: Partial<SystemConfig>): Promise<SystemConfig> => {
+export const updateConfig = (data: ConfigUpdateRequest): Promise<SystemConfig> => {
   return apiClient.post('/config', data).then((res) => res.data);
 };

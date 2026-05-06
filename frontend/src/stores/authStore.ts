@@ -11,6 +11,22 @@ interface AuthState {
   updateUser: (user: UserInfo) => void;
 }
 
+const AUTH_STORAGE_KEY = 'auth-storage';
+
+export const getStoredAuthToken = (): string | null => {
+  const authStorage = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!authStorage) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(authStorage);
+    return parsed?.state?.token ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -33,7 +49,7 @@ export const useAuthStore = create<AuthState>()(
         set({ user }),
     }),
     {
-      name: 'auth-storage',
+      name: AUTH_STORAGE_KEY,
     }
   )
 );

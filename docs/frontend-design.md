@@ -138,7 +138,7 @@ frontend/
 │   │
 │   ├── stores/                   # ✅ Zustand 状态
 │   │   ├── channelStore.ts       # 频道状态
-│   │   ├── taskStore.ts          # 任务状态
+│   │   ├── authStore.ts          # 登录态
 │   │   ├── settingStore.ts       # 设置状态
 │   │   └── uiStore.ts            # UI 状态
 │   │
@@ -198,9 +198,9 @@ frontend/
 | Store | 状态 | Actions |
 |-------|------|---------|
 | `channelStore` | channels, selectedChannelIds, loading | setChannels, addChannel, updateChannel, removeChannel |
-| `taskStore` | tasks, taskProgress, loading | setTasks, updateTask, updateTaskProgress |
+| `authStore` | token, user, isAuthenticated | setAuth, logout, updateUser |
 | `settingStore` | config, language, loading | setConfig, setLanguage |
-| `uiStore` | sidebarCollapsed, currentPath | setSidebarCollapsed, setCurrentPath |
+| `uiStore` | sidebarCollapsed, currentPath, alerts | setSidebarCollapsed, setCurrentPath, addAlert |
 
 ### 4. 国际化 (✅ 完成)
 

@@ -5,6 +5,7 @@ import type {
   ChannelStatusData,
   SystemAlertData,
 } from '@/types';
+import { getStoredAuthToken } from '@/stores/authStore';
 
 export type WsEventHandler<T = unknown> = (data: T) => void;
 
@@ -13,6 +14,7 @@ export class WebSocketClient {
   private url: string;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private handlers: Map<string, Set<WsEventHandler>> = new Map();
+  private shouldReconnect = false;
 
   constructor() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -23,9 +25,20 @@ export class WebSocketClient {
   }
 
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+    const token = getStoredAuthToken();
+    if (!token) {
+      this.shouldReconnect = false;
+      return;
+    }
 
-    const token = localStorage.getItem('token');
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+
+    this.shouldReconnect = true;
     const wsUrl = token ? `${this.url}?token=${encodeURIComponent(token)}` : this.url;
     this.ws = new WebSocket(wsUrl);
 
@@ -42,7 +55,18 @@ export class WebSocketClient {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      this.ws = null;
+      if (!this.shouldReconnect || !getStoredAuthToken()) {
+        return;
+      }
+
+      if (event.code === 1008) {
+        console.warn('WebSocket authentication failed, stop reconnecting.');
+        this.shouldReconnect = false;
+        return;
+      }
+
       console.log('WebSocket disconnected, reconnecting in 3s...');
       this.reconnectTimer = setTimeout(() => this.connect(), 3000);
     };
@@ -53,6 +77,7 @@ export class WebSocketClient {
   }
 
   disconnect(): void {
+    this.shouldReconnect = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

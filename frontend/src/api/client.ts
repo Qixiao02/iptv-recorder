@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import type { ErrorResponse } from '@/types';
+import { getStoredAuthToken } from '@/stores/authStore';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -15,18 +16,9 @@ export const apiClient = axios.create({
 // 请求拦截器 - 添加 Token
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // 从 localStorage 获取 token
-    const authStorage = localStorage.getItem('auth-storage');
-    if (authStorage) {
-      try {
-        const parsed = JSON.parse(authStorage);
-        const token = parsed?.state?.token;
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-      } catch {
-        // ignore
-      }
+    const token = getStoredAuthToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },

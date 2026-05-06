@@ -207,10 +207,132 @@
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 6px;
-  height: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   background: var(--color-recording);
-  border-radius: 50%;
+  border-radius: 999px;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.alert-menu-container {
+  position: relative;
+}
+
+.alert-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: 420px;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  animation: dropdown-in 0.15s ease-out;
+}
+
+.alert-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.alert-dropdown-divider {
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.alert-clear-btn,
+.alert-dismiss-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.alert-clear-btn:hover,
+.alert-dismiss-btn:hover {
+  color: var(--text-primary);
+}
+
+.alert-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.alert-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.alert-level {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.alert-time,
+.alert-details {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.alert-message {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+
+.alert-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.alert-info .alert-level {
+  color: var(--brand-primary);
+}
+
+.alert-warning .alert-level {
+  color: #f59e0b;
+}
+
+.alert-error .alert-level,
+.alert-critical .alert-level {
+  color: var(--color-error);
 }
 
 .user-avatar {

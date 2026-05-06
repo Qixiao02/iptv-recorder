@@ -37,6 +37,11 @@ export IPTV__RECORDER__EXECUTABLE=/path/to/N_m3u8DL-RE
 # 克隆项目
 cd E:/WrenPorject/iptv-recorder
 
+# 配置安全相关环境变量（首次启动前必须设置 JWT 密钥）
+export IPTV_JWT_SECRET='replace-with-a-random-secret-at-least-32-chars'
+# 可选：显式指定首个管理员密码
+export IPTV_INITIAL_ADMIN_PASSWORD='replace-with-a-strong-admin-password'
+
 # 编译并运行
 cargo run
 
@@ -52,6 +57,10 @@ cargo run
 3. 创建所有数据表和索引
 4. 启动 Cron 调度器
 5. 启动 Web 服务器
+6. 如果 `admin` 账号不存在，则创建首个管理员账号
+
+> 注意：从当前版本开始，必须先设置 `IPTV_JWT_SECRET` 才能启动。
+> 如果未设置 `IPTV_INITIAL_ADMIN_PASSWORD`，系统会生成一次性管理员密码并写入启动日志，请首次登录后立即修改密码。
 
 ```
 🚀 IPTV Recorder starting...
@@ -75,7 +84,7 @@ Database migrations completed
 | 录制引擎 | ✅ 已完成 | 集成 N_m3u8DL-RE，支持手动/自动录制 |
 | 任务管理 | ✅ 已完成 | 任务查询、取消任务、状态监控 |
 | WebSocket | ✅ 基础完成 | WebSocket 连接（待扩展实时推送） |
-| Web 界面 | ⏳ 待开发 | 管理界面 |
+| Web 界面 | ✅ 已完成 | React + Vite 管理界面 |
 
 ## 系统概览
 
@@ -304,12 +313,12 @@ RUST_FORMAT=json cargo run
 - [x] Cron 调度器集成
 - [x] N_m3u8DL-RE 进程管理
 - [x] 手动录制功能
-- [ ] 频道健康检测（HEAD 请求）
-- [ ] 录制进度实时 WebSocket 推送
-- [ ] Web 管理界面（HTMX + Alpine.js）
+- [x] 频道健康检测（HEAD/GET 请求）
+- [x] 录制进度实时 WebSocket 推送
+- [x] Web 管理界面（React + Vite）
 - [ ] EPG 节目单支持
 - [ ] 录制文件自动清理
-- [ ] 用户认证与权限
+- [x] 用户认证与权限
 
 ## 许可证
 

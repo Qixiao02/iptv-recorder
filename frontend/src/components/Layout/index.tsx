@@ -20,6 +20,7 @@ import {
   ChevronDown,
   Sun,
   Moon,
+  X,
 } from 'lucide-react';
 import './Layout.css';
 
@@ -35,17 +36,29 @@ export const Layout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-  const { sidebarCollapsed, setSidebarCollapsed } = useUIStore();
+  const {
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    alerts,
+    markAllAlertsRead,
+    dismissAlert,
+  } = useUIStore();
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showAlertMenu, setShowAlertMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const alertMenuRef = useRef<HTMLDivElement>(null);
+  const unreadAlertCount = alerts.filter((alert) => !alert.read).length;
 
   // 点击外部关闭用户菜单
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setShowUserMenu(false);
+      }
+      if (alertMenuRef.current && !alertMenuRef.current.contains(event.target as Node)) {
+        setShowAlertMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -62,6 +75,13 @@ export const Layout: React.FC = () => {
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const alertLevelText: Record<string, string> = {
+    info: '信息',
+    warning: '警告',
+    error: '错误',
+    critical: '严重',
   };
 
   return (
@@ -144,10 +164,68 @@ export const Layout: React.FC = () => {
             </button>
 
             {/* Notifications */}
-            <button className="header-btn">
-              <Bell size={18} />
-              <span className="notification-badge" />
-            </button>
+            <div className="alert-menu-container" ref={alertMenuRef}>
+              <button
+                className="header-btn"
+                onClick={() => {
+                  const nextOpen = !showAlertMenu;
+                  setShowAlertMenu(nextOpen);
+                  if (!showAlertMenu) {
+                    markAllAlertsRead();
+                  }
+                }}
+              >
+                <Bell size={18} />
+                {unreadAlertCount > 0 && (
+                  <span className="notification-badge">{Math.min(unreadAlertCount, 9)}</span>
+                )}
+              </button>
+
+              {showAlertMenu && (
+                <div className="alert-dropdown">
+                  <div className="alert-dropdown-header">
+                    <span>系统告警</span>
+                    {alerts.length > 0 && (
+                      <button className="alert-clear-btn" onClick={markAllAlertsRead}>
+                        全部已读
+                      </button>
+                    )}
+                  </div>
+                  <div className="alert-dropdown-divider" />
+                  {alerts.length > 0 ? (
+                    <div className="alert-list">
+                      {alerts.map((alert) => (
+                        <div key={alert.id} className={`alert-item alert-${alert.level}`}>
+                          <div className="alert-item-main">
+                            <div className="alert-item-top">
+                              <span className="alert-level">{alertLevelText[alert.level]}</span>
+                              <span className="alert-time">
+                                {new Date(alert.created_at).toLocaleTimeString('zh-CN', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                            <div className="alert-message">{alert.message}</div>
+                            {alert.details && (
+                              <div className="alert-details">{alert.details}</div>
+                            )}
+                          </div>
+                          <button
+                            className="alert-dismiss-btn"
+                            onClick={() => dismissAlert(alert.id)}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="alert-empty">暂无系统告警</div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Language */}
             <button className="header-btn" onClick={handleLanguageChange}>

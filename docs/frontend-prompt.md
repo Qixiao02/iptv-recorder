@@ -59,8 +59,8 @@ frontend/
 │   │   ├── Live/         # 直播预览
 │   │   └── Settings/     # 系统设置
 │   ├── stores/           # Zustand 状态仓库
-│   │   ├── useAppStore.ts
-│   │   ├── useTaskStore.ts
+│   │   ├── authStore.ts
+│   │   ├── uiStore.ts
 │   │   └── ...
 │   ├── types/            # TypeScript 类型定义
 │   │   ├── channel.ts

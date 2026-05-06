@@ -102,7 +102,7 @@ export const Login: React.FC = () => {
         </form>
 
         <div className="login-footer">
-          <p>首次使用请及时修改默认密码</p>
+          <p>首次启动请查看部署说明，确认已配置 JWT 密钥并妥善保管管理员初始密码</p>
         </div>
       </div>
     </div>

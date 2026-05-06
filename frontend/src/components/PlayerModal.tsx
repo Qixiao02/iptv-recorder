@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
+import { getStoredAuthToken } from '@/stores/authStore';
 import './PlayerModal.css';
 
 interface PlayerModalProps {
@@ -169,7 +170,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     if (!videoRef.current) return;
 
     const video = videoRef.current;
-    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}`;
+    const token = getStoredAuthToken();
+    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}${
+      token ? `&token=${encodeURIComponent(token)}` : ''
+    }`;
 
     if (Hls.isSupported()) {
       const hls = new Hls({
@@ -208,7 +212,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     if (!videoRef.current) return;
 
     const video = videoRef.current;
-    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}`;
+    const token = getStoredAuthToken();
+    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}${
+      token ? `&token=${encodeURIComponent(token)}` : ''
+    }`;
 
     video.src = proxyUrl;
     video.addEventListener('loadeddata', () => {

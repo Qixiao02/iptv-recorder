@@ -2,7 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask } from '@/api/tasks';
-import { getChannels } from '@/api/channels';
+import { getAllChannels, getChannels } from '@/api/channels';
 import { getSchedules } from '@/api/schedules';
 import { getUpcoming } from '@/api/system';
 import {
@@ -46,10 +46,11 @@ const StatCard: React.FC<StatCardProps> = ({ icon, label, value, trend, trendUp,
 
 interface TaskRowProps {
   task: Task;
+  channelName: string;
   onStop?: () => void;
 }
 
-const TaskRow: React.FC<TaskRowProps> = ({ task, onStop }) => {
+const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
   const isRunning = task.status === 'running';
 
   return (
@@ -60,7 +61,7 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onStop }) => {
         </div>
         <div className="channel-info">
           <div className="channel-name">
-            {task.channel_id.slice(0, 8)}...
+            {channelName}
           </div>
           <div className="channel-meta">
             {isRunning && task.current_speed && (
@@ -143,6 +144,11 @@ export const Dashboard: React.FC = () => {
     queryFn: () => getChannels({ page_size: 1 }), // 只需要总数
   });
 
+  const { data: allChannels } = useQuery({
+    queryKey: ['channels', 'all'],
+    queryFn: getAllChannels,
+  });
+
   const { data: schedules } = useQuery({
     queryKey: ['schedules'],
     queryFn: getSchedules,
@@ -176,6 +182,13 @@ export const Dashboard: React.FC = () => {
 
   // 启用的计划数
   const enabledSchedules = schedules?.filter((s) => s.enabled).length || 0;
+  const channelMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    allChannels?.forEach((channel) => {
+      map.set(channel.id, channel.name);
+    });
+    return map;
+  }, [allChannels]);
 
   return (
     <div className="dashboard">
@@ -261,7 +274,11 @@ export const Dashboard: React.FC = () => {
                 </div>
                 {runningTasks.map((task, idx) => (
                   <div key={task.id} className="stagger-item" style={{ animationDelay: `${idx * 0.05}s` }}>
-                    <TaskRow task={task} onStop={() => cancelMutation.mutate(task.id)} />
+                    <TaskRow
+                      task={task}
+                      channelName={channelMap.get(task.channel_id) || `频道 ${task.channel_id.slice(0, 8)}...`}
+                      onStop={() => cancelMutation.mutate(task.id)}
+                    />
                   </div>
                 ))}
               </div>
@@ -292,7 +309,7 @@ export const Dashboard: React.FC = () => {
                     <div className="timeline-content">
                       <div className="timeline-title">{task.schedule_name}</div>
                       <div className="timeline-meta">
-                        <span className="channel">{task.channel_id.slice(0, 8)}...</span>
+                        <span className="channel">{channelMap.get(task.channel_id) || `频道 ${task.channel_id.slice(0, 8)}...`}</span>
                         <span className="time">
                           {new Date(task.next_run).toLocaleString('zh-CN', {
                             month: 'numeric',
