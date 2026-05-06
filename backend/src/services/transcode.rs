@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 /// 转码会话信息
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TranscodeSession {
     pub id: String,
@@ -28,6 +29,7 @@ pub struct ActiveTranscode {
 }
 
 /// 转码服务
+#[allow(dead_code)]
 pub struct TranscodeService {
     /// 活动的转码会话
     sessions: Arc<RwLock<HashMap<String, ActiveTranscode>>>,
@@ -52,6 +54,16 @@ impl TranscodeService {
             hls_base_dir,
             session_timeout_secs: 300, // 5 分钟超时
         }
+    }
+
+    pub fn start_cleanup_task(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let interval = Duration::from_secs(60);
+            loop {
+                tokio::time::sleep(interval).await;
+                self.cleanup_expired().await;
+            }
+        });
     }
 
     /// 启动转码
@@ -185,6 +197,7 @@ impl TranscodeService {
     }
 
     /// 停止频道的所有转码
+    #[allow(dead_code)]
     pub async fn stop_channel_transcode(&self, channel_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
         let session_ids: Vec<String> = sessions
@@ -211,12 +224,14 @@ impl TranscodeService {
     }
 
     /// 获取转码会话
+    #[allow(dead_code)]
     pub async fn get_session(&self, session_id: &str) -> Option<TranscodeSession> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).map(|a| a.session.clone())
     }
 
     /// 获取 HLS 文件路径
+    #[allow(dead_code)]
     pub async fn get_hls_file(&self, session_id: &str, filename: &str) -> Option<PathBuf> {
         info!("Looking for HLS file: session={}, filename={}", session_id, filename);
         let sessions = self.sessions.read().await;
@@ -236,6 +251,7 @@ impl TranscodeService {
     }
 
     /// 清理超时的会话
+    #[allow(dead_code)]
     pub async fn cleanup_expired(&self) {
         let mut sessions = self.sessions.write().await;
         let now = Instant::now();
@@ -264,6 +280,7 @@ impl TranscodeService {
     }
 
     /// 停止所有转码
+    #[allow(dead_code)]
     pub async fn stop_all(&self) {
         let mut sessions = self.sessions.write().await;
 

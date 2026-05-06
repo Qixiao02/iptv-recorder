@@ -17,21 +17,21 @@ use uuid::Uuid;
 pub struct RecordingService {
     process_manager: Arc<ProcessManager>,
     ctx: ServiceContext,
-    post_processor: PostProcessor,
     event_sender: Option<EventSender>,
+}
+
+struct RuntimeRecordingSettings {
+    recorder_executable: PathBuf,
+    recordings_dir: PathBuf,
+    default_duration_seconds: i64,
+    default_thread_count: i32,
 }
 
 impl RecordingService {
     pub fn new(process_manager: Arc<ProcessManager>, ctx: ServiceContext, event_sender: Option<EventSender>) -> Self {
-        let recordings_dir = ctx.config.storage.recordings_dir.clone();
-        let post_processor = PostProcessor::new(
-            ctx.config.recorder.post_process.clone(),
-            recordings_dir,
-        );
         Self {
             process_manager,
             ctx,
-            post_processor,
             event_sender,
         }
     }
@@ -40,6 +40,16 @@ impl RecordingService {
     pub async fn start_manual(&self, req: ManualRecordRequest) -> Result<Task> {
         let task_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        let runtime_settings = self.load_runtime_settings().await?;
+        let duration_seconds = req
+            .duration_seconds
+            .filter(|duration| *duration > 0)
+            .unwrap_or(runtime_settings.default_duration_seconds);
+        let thread_count = req
+            .thread_count
+            .filter(|threads| *threads > 0)
+            .unwrap_or(runtime_settings.default_thread_count);
+        let post_processor = self.build_post_processor(&req, &runtime_settings);
 
         // 获取频道信息
         let channel = self.get_channel(&req.channel_id).await?;
@@ -51,6 +61,7 @@ impl RecordingService {
             &req.output_name,
             &req.output_dir,
             req.output_template.as_deref(),
+            &runtime_settings.recordings_dir,
         ).await?;
 
         // 创建任务记录
@@ -70,23 +81,24 @@ impl RecordingService {
         .await?;
 
         // 校验录制工具路径（仅当绝对路径时检查文件是否存在）
-        let exe = &self.ctx.config.recorder.executable;
+        let exe = &runtime_settings.recorder_executable;
         if std::path::Path::new(exe).is_absolute() && !std::path::Path::new(exe).exists() {
             return Err(anyhow::anyhow!(
                 "录制工具未找到: {}，请在设置中配置正确路径或将其加入系统 PATH",
-                exe
+                exe.display()
             ));
         }
 
         // 构建录制配置
         let config = RecordingConfig {
+            recorder_executable: Some(runtime_settings.recorder_executable.clone()),
             url: channel.url.clone(),
             output_path: output_path.clone(),
-            duration_seconds: Some(req.duration_seconds as u64),
+            duration_seconds: Some(duration_seconds as u64),
             headers: vec![],
             user_agent: Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string()),
             proxy: None,
-            threads: Some(req.thread_count as usize),
+            threads: Some(thread_count as usize),
             video_quality: req.video_quality.clone(),
             audio_quality: req.audio_quality.clone(),
             max_speed: req.max_speed.clone(),
@@ -126,8 +138,7 @@ impl RecordingService {
         let output_path_clone = output_path.clone();
         let task_id_clone = task_id.clone();
         let mut status_rx = handle.status_rx;
-        let post_processor = self.post_processor.clone();
-        let duration_seconds = req.duration_seconds as i64;
+        let post_processor = post_processor.clone();
         let start_time = std::time::Instant::now();
         let event_sender_clone = self.event_sender.clone();
 
@@ -209,7 +220,7 @@ impl RecordingService {
                             crate::core::process::ProcessStatus::Starting => continue,
                             crate::core::process::ProcessStatus::Running => continue,
                             crate::core::process::ProcessStatus::Stopping => continue,
-                            crate::core::process::ProcessStatus::Completed { exit_code } => {
+                            crate::core::process::ProcessStatus::Completed { exit_code: _ } => {
                                 break;
                             }
                             crate::core::process::ProcessStatus::Failed { error: _ } => {
@@ -318,12 +329,12 @@ impl RecordingService {
                     // 更新输出路径
                     let final_path_str = final_path.to_string_lossy().to_string();
 
-                    sqlx::query(
+                    let result = sqlx::query(
                         r#"
                         UPDATE tasks
                         SET status = ?, ended_at = ?, exit_code = ?, file_size = ?,
                             duration_recorded = ?, progress_percent = 100, output_path = ?, updated_at = ?
-                        WHERE id = ?
+                        WHERE id = ? AND status = 'running'
                         "#,
                     )
                     .bind("completed")
@@ -335,8 +346,12 @@ impl RecordingService {
                     .bind(&now)
                     .bind(&task_id_clone)
                     .execute(&db)
-                    .await
-                    .ok();
+                    .await;
+
+                    if !matches!(result, Ok(done) if done.rows_affected() > 0) {
+                        info!("跳过完成态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        return;
+                    }
 
                     info!("✅ 录制任务完成: task_id={}, output={}, duration={}s, size={}",
                         task_id_clone, final_path_str, final_elapsed, file_size);
@@ -363,12 +378,12 @@ impl RecordingService {
                         None => 0,
                     };
 
-                    sqlx::query(
+                    let result = sqlx::query(
                         r#"
                         UPDATE tasks
                         SET status = ?, ended_at = ?, error_message = ?, file_size = ?,
                             duration_recorded = ?, updated_at = ?
-                        WHERE id = ?
+                        WHERE id = ? AND status = 'running'
                         "#,
                     )
                     .bind("failed")
@@ -379,8 +394,12 @@ impl RecordingService {
                     .bind(&now)
                     .bind(&task_id_clone)
                     .execute(&db)
-                    .await
-                    .ok();
+                    .await;
+
+                    if !matches!(result, Ok(done) if done.rows_affected() > 0) {
+                        info!("跳过失败态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        return;
+                    }
 
                     error!("❌ 录制任务失败: task_id={}, error={}", task_id_clone, error);
 
@@ -406,11 +425,11 @@ impl RecordingService {
                         None => 0,
                     };
 
-                    sqlx::query(
+                    let result = sqlx::query(
                         r#"
                         UPDATE tasks
                         SET status = ?, ended_at = ?, file_size = ?, duration_recorded = ?, updated_at = ?
-                        WHERE id = ?
+                        WHERE id = ? AND status = 'running'
                         "#,
                     )
                     .bind("cancelled")
@@ -420,8 +439,12 @@ impl RecordingService {
                     .bind(&now)
                     .bind(&task_id_clone)
                     .execute(&db)
-                    .await
-                    .ok();
+                    .await;
+
+                    if !matches!(result, Ok(done) if done.rows_affected() > 0) {
+                        info!("跳过取消态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        return;
+                    }
 
                     info!("🚫 录制任务已取消: task_id={}, duration={}s", task_id_clone, final_elapsed);
 
@@ -489,18 +512,7 @@ impl RecordingService {
             // 仍然更新数据库，清理可能的状态不一致
         }
 
-        // 尝试停止进程（可能不存在，比如僵尸任务）
-        match self.process_manager.stop_by_task_id(id).await {
-            Ok(_) => {
-                info!("进程已停止: task_id={}", id);
-            }
-            Err(e) => {
-                warn!("停止进程失败（可能已结束）: task_id={}, error={}", id, e);
-                // 继续执行，仍然更新数据库状态
-            }
-        }
-
-        // 更新数据库状态为 cancelled
+        // 先将状态从 running 原子切到 cancelled，避免后台收尾协程覆盖终态
         let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             r#"
@@ -514,6 +526,16 @@ impl RecordingService {
         .bind(id)
         .execute(&self.ctx.db)
         .await?;
+
+        // 尝试停止进程（可能不存在，比如僵尸任务）
+        match self.process_manager.stop_by_task_id(id).await {
+            Ok(_) => {
+                info!("进程已停止: task_id={}", id);
+            }
+            Err(e) => {
+                warn!("停止进程失败（可能已结束）: task_id={}, error={}", id, e);
+            }
+        }
 
         if result.rows_affected() > 0 {
             info!("任务已取消: task_id={}", id);
@@ -580,6 +602,7 @@ impl RecordingService {
         custom_name: &Option<String>,
         custom_dir: &Option<String>,
         output_template: Option<&str>,
+        default_recordings_dir: &std::path::Path,
     ) -> Result<PathBuf> {
         // 确定输出目录：优先使用自定义目录，否则使用系统默认
         let output_dir: String = if let Some(dir) = custom_dir {
@@ -587,10 +610,10 @@ impl RecordingService {
                 info!("使用自定义输出目录: {}", dir);
                 dir.clone()
             } else {
-                self.ctx.config.storage.recordings_dir.to_string_lossy().to_string()
+                default_recordings_dir.to_string_lossy().to_string()
             }
         } else {
-            self.ctx.config.storage.recordings_dir.to_string_lossy().to_string()
+            default_recordings_dir.to_string_lossy().to_string()
         };
 
         // 确保输出目录存在
@@ -602,7 +625,7 @@ impl RecordingService {
             if !template.is_empty() {
                 // 使用模板替换变量
                 let now = Utc::now();
-                let channel_name = channel.name.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+                let channel_name = Self::sanitize_filename_part(&channel.name);
 
                 let filename = template
                     .replace("{channel_name}", &channel_name)
@@ -643,8 +666,102 @@ impl RecordingService {
     /// 生成默认文件名
     fn generate_default_filename(channel: &Channel) -> String {
         let now = Utc::now();
-        let channel_name = channel.name.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+        let channel_name = Self::sanitize_filename_part(&channel.name);
         format!("{}_{}", channel_name, now.format("%Y%m%d_%H%M%S"))
+    }
+
+    fn sanitize_filename_part(input: &str) -> String {
+        let sanitized = input
+            .chars()
+            .map(|ch| {
+                if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                    '_'
+                } else if ch.is_whitespace() {
+                    '_'
+                } else {
+                    ch
+                }
+            })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string();
+
+        if sanitized.is_empty() {
+            "recording".to_string()
+        } else {
+            sanitized
+        }
+    }
+
+    async fn load_runtime_settings(&self) -> Result<RuntimeRecordingSettings> {
+        let recorder_executable = self
+            .get_system_value_string(
+                "recording.n_m3u8dl_re_path",
+                &self.ctx.config.recorder.executable.to_string_lossy(),
+            )
+            .await?;
+        let recordings_dir = self
+            .get_system_value_string(
+                "storage.recordings_path",
+                &self.ctx.config.storage.recordings_dir.to_string_lossy(),
+            )
+            .await?;
+
+        Ok(RuntimeRecordingSettings {
+            recorder_executable: PathBuf::from(recorder_executable),
+            recordings_dir: PathBuf::from(recordings_dir),
+            default_duration_seconds: self.get_system_value("recording.default_duration_minutes", 60u32).await? as i64 * 60,
+            default_thread_count: self.get_system_value("recording.thread_count", 4u32).await? as i32,
+        })
+    }
+
+    async fn get_system_value<T>(&self, key: &str, default: T) -> Result<T>
+    where
+        T: std::str::FromStr,
+    {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT value FROM system_config WHERE key = ?"
+        )
+        .bind(key)
+        .fetch_optional(&self.ctx.db)
+        .await?;
+
+        if let Some((value,)) = row {
+            value.parse().or(Ok(default))
+        } else {
+            Ok(default)
+        }
+    }
+
+    async fn get_system_value_string(&self, key: &str, default: &str) -> Result<String> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT value FROM system_config WHERE key = ?"
+        )
+        .bind(key)
+        .fetch_optional(&self.ctx.db)
+        .await?;
+
+        Ok(row.map(|(value,)| value).unwrap_or_else(|| default.to_string()))
+    }
+
+    fn build_post_processor(
+        &self,
+        req: &ManualRecordRequest,
+        runtime_settings: &RuntimeRecordingSettings,
+    ) -> PostProcessor {
+        let mut config = self.ctx.config.recorder.post_process.clone();
+        if let Some(mode) = &req.transcode_mode {
+            if !mode.is_empty() {
+                config.mode = mode.clone();
+            }
+        }
+        if let Some(preset) = &req.transcode_preset {
+            if !preset.is_empty() {
+                config.preset = preset.clone();
+            }
+        }
+
+        PostProcessor::new(config, runtime_settings.recordings_dir.clone())
     }
 }
 
@@ -750,4 +867,70 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
 
     warn!("未找到输出文件: 期望={}", expected_path.display());
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, core::{database, process::ProcessManager}};
+    use std::{path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("iptv-recorder-{name}-{nanos}.db"))
+    }
+
+    #[tokio::test]
+    async fn load_runtime_settings_prefers_system_config_values() {
+        let db_path = temp_db_path("recording-settings");
+        let db = database::init(db_path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("db init");
+
+        sqlx::query(
+            "UPDATE system_config SET value = ? WHERE key = 'storage.recordings_path'"
+        )
+        .bind("./custom-recordings")
+        .execute(&db)
+        .await
+        .expect("update recordings path");
+        sqlx::query(
+            "UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'"
+        )
+        .bind("/usr/local/bin/custom-recorder")
+        .execute(&db)
+        .await
+        .expect("update recorder path");
+        sqlx::query(
+            "UPDATE system_config SET value = ? WHERE key = 'recording.default_duration_minutes'"
+        )
+        .bind("90")
+        .execute(&db)
+        .await
+        .expect("update duration");
+        sqlx::query(
+            "UPDATE system_config SET value = ? WHERE key = 'recording.thread_count'"
+        )
+        .bind("8")
+        .execute(&db)
+        .await
+        .expect("update thread count");
+
+        let service = RecordingService::new(
+            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+            ServiceContext::new(db, Config::default()),
+            None,
+        );
+
+        let settings = service.load_runtime_settings().await.expect("runtime settings");
+        assert_eq!(settings.recordings_dir, PathBuf::from("./custom-recordings"));
+        assert_eq!(settings.recorder_executable, PathBuf::from("/usr/local/bin/custom-recorder"));
+        assert_eq!(settings.default_duration_seconds, 5400);
+        assert_eq!(settings.default_thread_count, 8);
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
 }

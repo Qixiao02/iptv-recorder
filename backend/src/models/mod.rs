@@ -185,8 +185,7 @@ pub struct Task {
 #[derive(Debug, Deserialize)]
 pub struct ManualRecordRequest {
     pub channel_id: String,
-    #[serde(default = "default_duration")]
-    pub duration_seconds: i64,
+    pub duration_seconds: Option<i64>,
     pub output_name: Option<String>,
     /// 自定义输出目录，为空时使用系统默认
     pub output_dir: Option<String>,
@@ -201,8 +200,11 @@ pub struct ManualRecordRequest {
     /// 下载限速 (如: 10M, 500K)
     pub max_speed: Option<String>,
     /// 下载线程数
-    #[serde(default = "default_thread_count")]
-    pub thread_count: i32,
+    pub thread_count: Option<i32>,
+    /// 转码模式 (off, realtime, post)
+    pub transcode_mode: Option<String>,
+    /// 转码预设 (high, medium, low, custom)
+    pub transcode_preset: Option<String>,
 }
 
 /// 分页响应

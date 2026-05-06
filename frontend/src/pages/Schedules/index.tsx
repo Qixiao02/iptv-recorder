@@ -124,6 +124,12 @@ export const Schedules: React.FC = () => {
       output_name: schedule.name,
       output_dir: schedule.output_dir || undefined,
       output_template: schedule.output_template || undefined,
+      video_quality: schedule.video_quality,
+      audio_quality: schedule.audio_quality,
+      max_speed: schedule.max_speed || undefined,
+      thread_count: schedule.thread_count,
+      transcode_mode: schedule.transcode_mode,
+      transcode_preset: schedule.transcode_preset,
     });
   };
 

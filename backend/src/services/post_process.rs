@@ -10,6 +10,7 @@ use tokio::process::{Child, Command};
 use tracing::{debug, error, info, warn};
 
 /// 转码模式
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TranscodeMode {
     /// 不转码
@@ -46,6 +47,7 @@ impl PostProcessor {
     }
 
     /// 获取转码模式
+    #[allow(dead_code)]
     pub fn mode(&self) -> TranscodeMode {
         TranscodeMode::from(self.config.mode.as_str())
     }
@@ -56,6 +58,7 @@ impl PostProcessor {
     }
 
     /// 是否实时转码
+    #[allow(dead_code)]
     pub fn is_realtime(&self) -> bool {
         self.config.is_realtime()
     }
@@ -76,6 +79,7 @@ impl PostProcessor {
 
     /// 启动实时转码录制
     /// 返回 FFmpeg 子进程
+    #[allow(dead_code)]
     pub fn start_realtime_recording(
         &self,
         url: &str,
@@ -99,6 +103,7 @@ impl PostProcessor {
     }
 
     /// 构建实时转码参数
+    #[allow(dead_code)]
     fn build_realtime_args(
         &self,
         url: &str,
@@ -293,6 +298,7 @@ impl PostProcessor {
     }
 
     /// 根据转码模式获取输出文件扩展名
+    #[allow(dead_code)]
     pub fn get_output_extension(&self) -> &'static str {
         if !self.is_enabled() {
             return "ts"; // 不转码时使用 ts 格式
@@ -306,6 +312,7 @@ impl PostProcessor {
 }
 
 /// 转码模式描述
+#[allow(dead_code)]
 pub fn get_mode_description(mode: &str) -> &'static str {
     match mode {
         "off" => "不转码 - 直接保存原始流，速度最快但文件最大",
@@ -316,6 +323,7 @@ pub fn get_mode_description(mode: &str) -> &'static str {
 }
 
 /// 转码预设描述
+#[allow(dead_code)]
 pub fn get_preset_description(preset: &str) -> &'static str {
     match preset {
         "high" => "高质量 (CRF 18, 文件较大)",

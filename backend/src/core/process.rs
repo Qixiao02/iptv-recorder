@@ -15,6 +15,9 @@ use uuid::Uuid;
 /// 录制进程配置
 #[derive(Debug, Clone)]
 pub struct RecordingConfig {
+    /// 录制器可执行文件路径，未指定时使用进程管理器默认值
+    pub recorder_executable: Option<PathBuf>,
+
     /// 频道 URL
     pub url: String,
 
@@ -85,6 +88,7 @@ struct ProcessInfo {
 }
 
 /// 用于停止录制的句柄
+#[allow(dead_code)]
 pub struct StopHandle {
     pub task_id: String,
     pub kill_tx: Option<oneshot::Sender<()>>,
@@ -126,7 +130,11 @@ impl ProcessManager {
         tokio::fs::create_dir_all(&self.temp_dir).await?;
 
         // 构建命令参数 (N_m3u8DL-RE 2025 版本)
-        let mut cmd = Command::new(&self.recorder_path);
+        let recorder_path = config
+            .recorder_executable
+            .as_ref()
+            .unwrap_or(&self.recorder_path);
+        let mut cmd = Command::new(recorder_path);
 
         // 基本参数
         cmd.arg(&config.url)
@@ -361,6 +369,7 @@ impl ProcessManager {
     }
 
     /// 检查任务是否正在运行
+    #[allow(dead_code)]
     pub async fn is_task_running(&self, task_id: &str) -> bool {
         let processes = self.processes.read().await;
         processes.values().any(|info| info.task_id == task_id)
@@ -405,6 +414,7 @@ mod tests {
     #[test]
     fn test_recording_config() {
         let config = RecordingConfig {
+            recorder_executable: None,
             url: "https://example.com/stream.m3u8".to_string(),
             output_path: PathBuf::from("/tmp/test.mp4"),
             duration_seconds: Some(60),
@@ -412,6 +422,9 @@ mod tests {
             user_agent: None,
             proxy: None,
             threads: Some(4),
+            video_quality: "best".to_string(),
+            audio_quality: "best".to_string(),
+            max_speed: None,
             task_id: "test-123".to_string(),
             channel_name: "Test Channel".to_string(),
         };

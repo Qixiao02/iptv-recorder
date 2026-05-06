@@ -59,9 +59,12 @@ async fn main() -> Result<()> {
     info!("📝 Configuration loaded from: {:?}", loaded.config_path);
     let config = loaded.config.clone();
 
+    // 校验安全关键配置，避免使用弱默认值启动
+    services::AuthService::validate_runtime_config()?;
+
     // 初始化数据库
     let db_path = config.database.path.to_string_lossy().to_string();
-    let db = core::database::init(&db_path).await?;
+    let db = core::database::init(&db_path, config.database.pool_size).await?;
     info!("🗄️  Database initialized: {}", config.database.path.display());
 
     // 初始化 ProcessManager
@@ -88,6 +91,7 @@ async fn main() -> Result<()> {
     // 初始化转码服务
     let hls_dir = config.storage.temp_dir.join("hls");
     let transcode_service = Arc::new(services::TranscodeService::new(hls_dir));
+    transcode_service.clone().start_cleanup_task();
     info!("🎬 Transcode Service initialized");
 
     // 启动 Web 服务

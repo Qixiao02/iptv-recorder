@@ -12,7 +12,7 @@ pub type Db = Pool<Sqlite>;
 /// 初始化数据库
 ///
 /// 创建数据库文件（如果不存在）并运行迁移
-pub async fn init(db_path: &str) -> Result<Db> {
+pub async fn init(db_path: &str, pool_size: u32) -> Result<Db> {
     // 解析完整路径
     let path = Path::new(db_path);
 
@@ -40,7 +40,7 @@ pub async fn init(db_path: &str) -> Result<Db> {
 
     // 创建连接池
     let pool = SqlitePoolOptions::new()
-        .max_connections(10)
+        .max_connections(pool_size.max(1))
         .connect_with(options)
         .await?;
 
@@ -77,6 +77,7 @@ async fn run_migrations(pool: &Db) -> Result<()> {
             cron_expression TEXT NOT NULL,
             duration_seconds INTEGER NOT NULL DEFAULT 3600,
             output_template TEXT DEFAULT '{channel_name}_{date}_{time}.mp4',
+            output_dir TEXT,
             priority INTEGER DEFAULT 5,
             enabled INTEGER DEFAULT 1,
             max_retry INTEGER DEFAULT 3,
@@ -165,6 +166,32 @@ async fn run_migrations(pool: &Db) -> Result<()> {
     .await?;
 
     tracing::info!("Database migrations completed");
+
+    // 清理重复 URL 的频道数据，保留每个 URL 最新的一条，再补唯一索引
+    sqlx::query(
+        r#"
+        DELETE FROM channels
+        WHERE id IN (
+            SELECT older.id
+            FROM channels older
+            JOIN channels newer
+              ON older.url = newer.url
+             AND older.id <> newer.id
+             AND (
+                    older.updated_at < newer.updated_at
+                 OR (older.updated_at = newer.updated_at AND older.rowid < newer.rowid)
+             )
+        );
+        "#
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_url_unique ON channels(url)"
+    )
+    .execute(pool)
+    .await?;
 
     // 添加 output_dir 字段到 schedules 表（如果不存在）
     let add_output_dir = sqlx::query(

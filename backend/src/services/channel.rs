@@ -41,6 +41,12 @@ pub struct ChannelService {
     ctx: ServiceContext,
 }
 
+pub enum ImportChannelResult {
+    Created,
+    Updated,
+    Skipped,
+}
+
 impl ChannelService {
     pub fn new(ctx: ServiceContext) -> Self {
         Self { ctx }
@@ -88,7 +94,20 @@ impl ChannelService {
         Ok(row)
     }
 
+    /// 根据 URL 获取频道
+    pub async fn get_by_url(&self, url: &str) -> Result<Option<Channel>> {
+        let channel = sqlx::query_as::<_, Channel>(
+            "SELECT * FROM channels WHERE url = ? LIMIT 1"
+        )
+        .bind(url)
+        .fetch_optional(&self.ctx.db)
+        .await?;
+
+        Ok(channel)
+    }
+
     /// 获取所有频道
+    #[allow(dead_code)]
     pub async fn list(&self) -> Result<Vec<Channel>> {
         let channels = sqlx::query_as::<_, Channel>(
             "SELECT * FROM channels ORDER BY group_name, name"
@@ -217,6 +236,21 @@ impl ChannelService {
         self.get_by_id(id).await
     }
 
+    /// 导入频道，支持覆盖现有频道
+    pub async fn import_channel(&self, req: CreateChannelRequest, overwrite: bool) -> Result<ImportChannelResult> {
+        if let Some(existing) = self.get_by_url(&req.url).await? {
+            if overwrite {
+                self.update(&existing.id, req).await?;
+                Ok(ImportChannelResult::Updated)
+            } else {
+                Ok(ImportChannelResult::Skipped)
+            }
+        } else {
+            self.create(req).await?;
+            Ok(ImportChannelResult::Created)
+        }
+    }
+
     /// 删除频道
     pub async fn delete(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM channels WHERE id = ?")
@@ -304,5 +338,92 @@ impl ChannelService {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, core::database};
+    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("iptv-recorder-{name}-{nanos}.db"))
+    }
+
+    async fn test_service(name: &str) -> (ChannelService, PathBuf) {
+        let db_path = temp_db_path(name);
+        let db = database::init(db_path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("db init");
+        let service = ChannelService::new(ServiceContext::new(db, Config::default()));
+        (service, db_path)
+    }
+
+    #[tokio::test]
+    async fn import_channel_skips_existing_when_overwrite_disabled() {
+        let (service, db_path) = test_service("channel-skip").await;
+        let original = CreateChannelRequest {
+            name: "CCTV-1".to_string(),
+            url: "http://example.com/live.m3u8".to_string(),
+            group_name: "央视".to_string(),
+            logo_url: None,
+        };
+        service.create(original).await.expect("create channel");
+
+        let duplicate = CreateChannelRequest {
+            name: "CCTV-1 HD".to_string(),
+            url: "http://example.com/live.m3u8".to_string(),
+            group_name: "高清".to_string(),
+            logo_url: Some("http://example.com/logo.png".to_string()),
+        };
+
+        let result = service.import_channel(duplicate, false).await.expect("import channel");
+        assert!(matches!(result, ImportChannelResult::Skipped));
+
+        let stored = service
+            .get_by_url("http://example.com/live.m3u8")
+            .await
+            .expect("query by url")
+            .expect("existing channel");
+        assert_eq!(stored.name, "CCTV-1");
+        assert_eq!(stored.group_name, "央视");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn import_channel_updates_existing_when_overwrite_enabled() {
+        let (service, db_path) = test_service("channel-overwrite").await;
+        service.create(CreateChannelRequest {
+            name: "CCTV-1".to_string(),
+            url: "http://example.com/live.m3u8".to_string(),
+            group_name: "央视".to_string(),
+            logo_url: None,
+        }).await.expect("create channel");
+
+        let result = service.import_channel(CreateChannelRequest {
+            name: "CCTV-1 HD".to_string(),
+            url: "http://example.com/live.m3u8".to_string(),
+            group_name: "高清".to_string(),
+            logo_url: Some("http://example.com/logo.png".to_string()),
+        }, true).await.expect("import overwrite");
+
+        assert!(matches!(result, ImportChannelResult::Updated));
+
+        let stored = service
+            .get_by_url("http://example.com/live.m3u8")
+            .await
+            .expect("query by url")
+            .expect("existing channel");
+        assert_eq!(stored.name, "CCTV-1 HD");
+        assert_eq!(stored.group_name, "高清");
+        assert_eq!(stored.logo_url.as_deref(), Some("http://example.com/logo.png"));
+
+        let _ = tokio::fs::remove_file(db_path).await;
     }
 }

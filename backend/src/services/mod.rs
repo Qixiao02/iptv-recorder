@@ -12,14 +12,14 @@ pub mod transcode;
 pub mod post_process;
 pub mod auth;
 
-pub use channel::{ChannelService, ChannelTestResult, PaginationParams, PaginatedChannels};
+pub use channel::{ChannelService, ChannelTestResult, ImportChannelResult, PaginationParams};
 pub use schedule::ScheduleService;
 pub use recording::RecordingService;
 pub use m3u_parser::{M3UParser, M3UParseResult};
 pub use scheduler::{SchedulerManager, CronTrigger, UpcomingTask};
 pub use config_service::{ConfigService, SystemConfig, ConfigUpdateRequest};
-pub use transcode::{TranscodeService, TranscodeSession};
-pub use post_process::{PostProcessor, TranscodeMode, get_mode_description, get_preset_description};
+pub use transcode::TranscodeService;
+pub use post_process::PostProcessor;
 pub use auth::{AuthService, Claims};
 
 use crate::config::Config;

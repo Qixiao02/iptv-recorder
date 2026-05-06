@@ -23,7 +23,7 @@ use crate::services::{
     ChannelService, ScheduleService, RecordingService, ServiceContext,
     M3UParser, CronTrigger, UpcomingTask, SchedulerManager,
     ConfigService, ConfigUpdateRequest, ChannelTestResult, PaginationParams,
-    AuthService,
+    AuthService, ImportChannelResult,
 };
 
 /// 应用状态
@@ -213,7 +213,7 @@ async fn import_channels(
     db: Pool<Sqlite>,
     config: Config,
     parse_result: crate::services::M3UParseResult,
-    _overwrite: bool,
+    overwrite: bool,
 ) -> Result<Json<ImportM3UResponse>, (StatusCode, Json<ErrorResponse>)> {
     let ctx = ServiceContext::new(db, config);
     let service = ChannelService::new(ctx);

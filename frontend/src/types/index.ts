@@ -91,6 +91,8 @@ export interface ManualRecordRequest {
   audio_quality?: string;
   max_speed?: string;
   thread_count?: number;
+  transcode_mode?: string;
+  transcode_preset?: string;
 }
 
 export interface UpcomingTask {
@@ -186,4 +188,10 @@ export interface SystemAlertData {
   level: 'info' | 'warning' | 'error' | 'critical';
   message: string;
   details?: string;
+}
+
+export interface UiAlert extends SystemAlertData {
+  id: string;
+  created_at: string;
+  read: boolean;
 }
