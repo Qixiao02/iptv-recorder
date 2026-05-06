@@ -731,6 +731,29 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[tokio::test]
+    async fn validate_proxy_url_rejects_localhost_and_non_http_schemes() {
+        let localhost = validate_proxy_url("http://localhost/stream.m3u8").await;
+        assert!(localhost.is_err());
+
+        let ftp = validate_proxy_url("ftp://example.com/stream.ts").await;
+        assert!(ftp.is_err());
+    }
+
+    #[test]
+    fn private_ip_detection_blocks_internal_ranges() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8))));
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+    }
+}
+
 // ===== 转码处理器 =====
 
 use crate::services::TranscodeService;

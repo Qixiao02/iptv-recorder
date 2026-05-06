@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getConfig, updateConfig, type ConfigUpdateRequest } from '@/api/system';
+import { getConfig, updateConfig } from '@/api/system';
 import { changePassword } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSettingStore } from '@/stores/settingStore';
 import type { SystemConfig } from '@/types';
+import { buildConfigUpdateRequest } from './configPayload';
 import {
   Settings,
   Database,
@@ -159,26 +160,7 @@ export const SettingsPage: React.FC = () => {
 
   // 保存
   const handleSave = () => {
-    const payload: ConfigUpdateRequest = {
-      storage: {
-        recordings_path: localConfig.storage.recordings_path,
-        auto_cleanup_days: localConfig.storage.auto_cleanup_days,
-        min_free_space_gb: localConfig.storage.min_free_space_gb,
-      },
-      recording: {
-        default_duration_minutes: localConfig.recording.default_duration_minutes,
-        n_m3u8dl_re_path: localConfig.recording.n_m3u8dl_re_path,
-        max_retry: localConfig.recording.max_retry,
-        thread_count: localConfig.recording.thread_count,
-      },
-      notification: {
-        on_complete: localConfig.notification.on_complete,
-        on_failure: localConfig.notification.on_failure,
-        disk_warning: localConfig.notification.disk_warning,
-      },
-    };
-
-    saveMutation.mutate(payload);
+    saveMutation.mutate(buildConfigUpdateRequest(localConfig));
   };
 
   // 重置

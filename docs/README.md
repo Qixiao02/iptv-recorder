@@ -10,6 +10,8 @@
 | [配置说明](./configuration.md) | 配置项详解、环境变量、部署配置 |
 | [开发指南](./development.md) | 开发环境搭建、代码规范、贡献指南 |
 | [部署指南](./deployment.md) | 生产环境部署、Docker 部署、运维监控 |
+| [发布清单](./release-checklist.md) | 发版前后检查项 |
+| [安全运维](./security-operations.md) | 首次部署、改密与密钥轮换 SOP |
 
 ## 快速开始
 

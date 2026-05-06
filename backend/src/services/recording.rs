@@ -933,4 +933,80 @@ mod tests {
 
         let _ = tokio::fs::remove_file(db_path).await;
     }
+
+    async fn test_service(name: &str) -> (RecordingService, PathBuf) {
+        let db_path = temp_db_path(name);
+        let db = database::init(db_path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("db init");
+
+        sqlx::query(
+            r#"
+            INSERT INTO channels (id, name, url, group_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind("channel-1")
+        .bind("测试频道")
+        .bind("https://example.com/live.m3u8")
+        .bind("Test")
+        .execute(&db)
+        .await
+        .expect("insert channel");
+
+        let service = RecordingService::new(
+            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+            ServiceContext::new(db, Config::default()),
+            None,
+        );
+
+        (service, db_path)
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_running_task_cancelled_and_completion_writeback_stays_blocked() {
+        let (service, db_path) = test_service("recording-cancel").await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES (?, ?, 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind("task-1")
+        .bind("channel-1")
+        .execute(&service.ctx.db)
+        .await
+        .expect("insert task");
+
+        service.cancel("task-1").await.expect("cancel task");
+
+        let task = service.get_task("task-1").await.expect("load task");
+        assert_eq!(task.status, "cancelled");
+
+        let rows = sqlx::query(
+            r#"
+            UPDATE tasks
+            SET status = 'completed', updated_at = datetime('now')
+            WHERE id = ? AND status = 'running'
+            "#,
+        )
+        .bind("task-1")
+        .execute(&service.ctx.db)
+        .await
+        .expect("guarded completion update")
+        .rows_affected();
+        assert_eq!(rows, 0);
+
+        let task = service.get_task("task-1").await.expect("reload task");
+        assert_eq!(task.status, "cancelled");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_unicode_letters() {
+        let sanitized = RecordingService::sanitize_filename_part("央视新闻 / 直播");
+        assert_eq!(sanitized, "央视新闻___直播");
+    }
 }

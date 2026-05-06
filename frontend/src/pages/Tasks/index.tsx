@@ -46,7 +46,6 @@ export const Tasks: React.FC = () => {
   const { data: tasks, isLoading, refetch } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 5000,
   });
 
   const { data: channels } = useQuery({

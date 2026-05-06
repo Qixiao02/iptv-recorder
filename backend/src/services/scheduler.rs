@@ -411,3 +411,79 @@ pub struct UpcomingTask {
     pub next_run: String,
     pub duration_seconds: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, core::{database, process::ProcessManager}, models::Schedule};
+    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("iptv-recorder-{name}-{nanos}.db"))
+    }
+
+    async fn test_scheduler(name: &str) -> (SchedulerManager, PathBuf) {
+        let db_path = temp_db_path(name);
+        let db = database::init(db_path.to_str().expect("utf8 path"), 1)
+            .await
+            .expect("db init");
+        let manager = SchedulerManager::new(
+            db,
+            Config::default(),
+            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+        )
+        .await
+        .expect("scheduler init");
+
+        (manager, db_path)
+    }
+
+    fn sample_schedule(enabled: bool) -> Schedule {
+        Schedule {
+            id: "schedule-1".to_string(),
+            name: "Morning News".to_string(),
+            channel_id: "channel-1".to_string(),
+            cron_expression: "0 8 * * *".to_string(),
+            duration_seconds: 1800,
+            output_template: "{channel_name}_{date}_{time}.mp4".to_string(),
+            output_dir: None,
+            priority: 5,
+            enabled,
+            max_retry: 3,
+            notify_on_complete: false,
+            video_quality: "best".to_string(),
+            audio_quality: "best".to_string(),
+            max_speed: None,
+            thread_count: 4,
+            transcode_mode: "off".to_string(),
+            transcode_preset: "medium".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_schedule_adds_and_removes_jobs_by_enabled_flag() {
+        let (manager, db_path) = test_scheduler("scheduler-sync").await;
+
+        let enabled_schedule = sample_schedule(true);
+        manager
+            .sync_schedule(&enabled_schedule)
+            .await
+            .expect("add enabled schedule");
+        assert!(manager.job_uuids.read().await.contains_key(&enabled_schedule.id));
+
+        let disabled_schedule = sample_schedule(false);
+        manager
+            .sync_schedule(&disabled_schedule)
+            .await
+            .expect("remove disabled schedule");
+        assert!(!manager.job_uuids.read().await.contains_key(&disabled_schedule.id));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+}
