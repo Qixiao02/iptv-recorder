@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getConfig, updateConfig } from '@/api/system';
+import { getConfig, updateConfig, getSystemHealth, getAuditLogs, runCleanup, reloadScheduler } from '@/api/system';
 import { changePassword } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSettingStore } from '@/stores/settingStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { SystemConfig } from '@/types';
 import { buildConfigUpdateRequest } from './configPayload';
 import {
@@ -26,10 +27,18 @@ import {
   Lock,
   Eye,
   EyeOff,
+  ShieldAlert,
+  Activity,
+  TimerReset,
+  ScrollText,
+  RefreshCw,
+  Server,
+  FileText,
+  Calendar,
 } from 'lucide-react';
 import './Settings.css';
 
-type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'account' | 'about';
+type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'operations' | 'account' | 'about';
 
 // 默认配置（用于初始化和重置）
 const defaultConfig: SystemConfig = {
@@ -47,12 +56,17 @@ export const SettingsPage: React.FC = () => {
   const [localConfig, setLocalConfig] = useState<SystemConfig>(defaultConfig);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const { user } = useAuthStore();
+  const alerts = useUIStore((state) => state.alerts);
+  const addAlert = useUIStore((state) => state.addAlert);
+  const isAdmin = user?.role === 'admin';
 
   const sections: { key: SettingsSection; icon: React.ReactNode; label: string }[] = [
     { key: 'general', icon: <Settings size={18} />, label: t('settings.general') },
     { key: 'storage', icon: <Database size={18} />, label: t('settings.storage') },
     { key: 'recording', icon: <Clapperboard size={18} />, label: t('settings.recording') },
     { key: 'notification', icon: <Bell size={18} />, label: t('settings.notification') },
+    ...(isAdmin ? [{ key: 'operations' as const, icon: <ShieldAlert size={18} />, label: '运行维护' }] : []),
     { key: 'account', icon: <User size={18} />, label: t('settings.account') },
     { key: 'about', icon: <Info size={18} />, label: t('settings.about') },
   ];
@@ -68,12 +82,31 @@ export const SettingsPage: React.FC = () => {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  const { user } = useAuthStore();
-
   // 获取配置
-  const { data: config, isLoading } = useQuery({
+  const { data: config, isLoading, refetch: refetchConfig } = useQuery({
     queryKey: ['config'],
     queryFn: getConfig,
+  });
+
+  const {
+    data: systemHealth,
+    isLoading: isHealthLoading,
+    refetch: refetchSystemHealth,
+  } = useQuery({
+    queryKey: ['system', 'health'],
+    queryFn: getSystemHealth,
+    enabled: isAdmin,
+    refetchInterval: isAdmin ? 30000 : false,
+  });
+
+  const {
+    data: auditLogs,
+    isLoading: isAuditLoading,
+    refetch: refetchAuditLogs,
+  } = useQuery({
+    queryKey: ['audit', 'logs'],
+    queryFn: getAuditLogs,
+    enabled: isAdmin,
   });
 
   // 当从服务器获取到配置时，更新本地状态
@@ -82,6 +115,12 @@ export const SettingsPage: React.FC = () => {
       setLocalConfig(config);
     }
   }, [config]);
+
+  useEffect(() => {
+    if (!isAdmin && activeSection === 'operations') {
+      setActiveSection('general');
+    }
+  }, [activeSection, isAdmin]);
 
   // 保存配置
   const saveMutation = useMutation({
@@ -112,6 +151,47 @@ export const SettingsPage: React.FC = () => {
     },
     onError: (error) => {
       setPasswordError(error instanceof Error ? error.message : '修改密码失败');
+    },
+  });
+
+  const cleanupMutation = useMutation({
+    mutationFn: runCleanup,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      refetchSystemHealth();
+      refetchAuditLogs();
+      addAlert({
+        level: 'info',
+        message: '清理任务已执行',
+        details: result.message,
+      });
+    },
+    onError: (error) => {
+      addAlert({
+        level: 'error',
+        message: '清理任务执行失败',
+        details: error instanceof Error ? error.message : '未知错误',
+      });
+    },
+  });
+
+  const reloadMutation = useMutation({
+    mutationFn: reloadScheduler,
+    onSuccess: (result) => {
+      refetchSystemHealth();
+      refetchAuditLogs();
+      addAlert({
+        level: 'info',
+        message: '调度器已重载',
+        details: result.message,
+      });
+    },
+    onError: (error) => {
+      addAlert({
+        level: 'error',
+        message: '调度器重载失败',
+        details: error instanceof Error ? error.message : '未知错误',
+      });
     },
   });
 
@@ -169,6 +249,32 @@ export const SettingsPage: React.FC = () => {
       setLocalConfig(config);
       setSaveError('');
     }
+  };
+
+  const handleRefreshOperations = () => {
+    refetchConfig();
+    refetchSystemHealth();
+    refetchAuditLogs();
+  };
+
+  const latestAlerts = alerts.slice(0, 6);
+
+  const healthStatus = (() => {
+    if (!systemHealth) return { label: '加载中', tone: 'neutral' };
+    if (systemHealth.failed_tasks_24h > 0) return { label: '需要关注', tone: 'warning' };
+    if (systemHealth.running_tasks > 0) return { label: '运行中', tone: 'success' };
+    return { label: '稳定', tone: 'success' };
+  })();
+
+  const formatDateTime = (value: string | null | undefined) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
   };
 
   const renderSection = () => {
@@ -504,6 +610,176 @@ export const SettingsPage: React.FC = () => {
           </div>
         );
 
+      case 'operations':
+        return (
+          <div className="settings-section">
+            <div className="section-header-row">
+              <div>
+                <h2>运行维护</h2>
+                <p className="section-subtext">查看系统健康、实时异常与关键操作审计记录</p>
+              </div>
+              <div className="section-header-actions">
+                <button className="btn btn-ghost" onClick={handleRefreshOperations}>
+                  <RefreshCw size={16} />
+                  刷新
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => reloadMutation.mutate()}
+                  disabled={reloadMutation.isPending}
+                >
+                  {reloadMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Activity size={16} />}
+                  重载调度器
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => cleanupMutation.mutate()}
+                  disabled={cleanupMutation.isPending}
+                >
+                  {cleanupMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <TimerReset size={16} />}
+                  执行清理
+                </button>
+              </div>
+            </div>
+
+            <div className="ops-summary-grid">
+              <div className={`ops-summary-card ${healthStatus.tone}`}>
+                <div className="ops-summary-title">
+                  <Server size={18} />
+                  系统状态
+                </div>
+                <div className="ops-summary-value">{healthStatus.label}</div>
+                <div className="ops-summary-meta">
+                  {isHealthLoading ? '正在同步健康数据...' : `最近审计: ${formatDateTime(systemHealth?.last_audit_at)}`}
+                </div>
+              </div>
+              <div className="ops-summary-card">
+                <div className="ops-summary-title">
+                  <Clapperboard size={18} />
+                  录制任务
+                </div>
+                <div className="ops-summary-value">{systemHealth?.running_tasks ?? '-'}</div>
+                <div className="ops-summary-meta">运行中任务 / 24h 失败 {systemHealth?.failed_tasks_24h ?? '-'}</div>
+              </div>
+              <div className="ops-summary-card">
+                <div className="ops-summary-title">
+                  <Calendar size={18} />
+                  调度计划
+                </div>
+                <div className="ops-summary-value">
+                  {systemHealth?.enabled_schedules ?? '-'}/{systemHealth?.schedules_total ?? '-'}
+                </div>
+                <div className="ops-summary-meta">启用数 / 总计划数</div>
+              </div>
+              <div className="ops-summary-card">
+                <div className="ops-summary-title">
+                  <User size={18} />
+                  访问面
+                </div>
+                <div className="ops-summary-value">{systemHealth?.users_total ?? '-'}</div>
+                <div className="ops-summary-meta">用户数 / 频道 {systemHealth?.channels_total ?? '-'}</div>
+              </div>
+            </div>
+
+            <div className="ops-grid">
+              <section className="ops-panel">
+                <div className="ops-panel-header">
+                  <h3>
+                    <ShieldAlert size={18} />
+                    实时异常
+                  </h3>
+                  <span className="ops-panel-meta">来自当前会话 WebSocket 告警流</span>
+                </div>
+                {latestAlerts.length > 0 ? (
+                  <div className="ops-alert-list">
+                    {latestAlerts.map((alert) => (
+                      <div key={alert.id} className={`ops-alert-item ${alert.level}`}>
+                        <div className="ops-alert-top">
+                          <span className="ops-alert-level">{alert.level.toUpperCase()}</span>
+                          <span className="ops-alert-time">{formatDateTime(alert.created_at)}</span>
+                        </div>
+                        <div className="ops-alert-message">{alert.message}</div>
+                        {alert.details && <div className="ops-alert-details">{alert.details}</div>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="ops-empty">当前会话还没有收到系统告警。</div>
+                )}
+              </section>
+
+              <section className="ops-panel">
+                <div className="ops-panel-header">
+                  <h3>
+                    <FileText size={18} />
+                    运维 SOP
+                  </h3>
+                  <span className="ops-panel-meta">结合仓库文档执行发布与应急操作</span>
+                </div>
+                <div className="ops-runbook-list">
+                  <div className="ops-runbook-item">
+                    <div className="ops-runbook-title">首次部署</div>
+                    <div className="ops-runbook-desc">设置 `IPTV_JWT_SECRET`，确认初始管理员密码，并首次登录后立即改密。</div>
+                  </div>
+                  <div className="ops-runbook-item">
+                    <div className="ops-runbook-title">发布前检查</div>
+                    <div className="ops-runbook-desc">执行 `docs/release-checklist.md` 中的构建、回滚与 WebSocket 冒烟检查。</div>
+                  </div>
+                  <div className="ops-runbook-item">
+                    <div className="ops-runbook-title">异常处置</div>
+                    <div className="ops-runbook-desc">凭审计日志定位变更，必要时轮换密码和 JWT 密钥，并核对 proxy 访问风险。</div>
+                  </div>
+                </div>
+                <div className="ops-doc-hint">
+                  详细文档：`docs/security-operations.md`、`docs/release-checklist.md`、`docs/operations-runbook.md`
+                </div>
+              </section>
+            </div>
+
+            <section className="ops-panel">
+              <div className="ops-panel-header">
+                <h3>
+                  <ScrollText size={18} />
+                  审计日志
+                </h3>
+                <span className="ops-panel-meta">最近 200 条关键操作记录</span>
+              </div>
+              {isAuditLoading ? (
+                <div className="ops-empty">正在加载审计日志...</div>
+              ) : auditLogs && auditLogs.length > 0 ? (
+                <div className="audit-table-wrap">
+                  <table className="audit-table">
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>用户</th>
+                        <th>角色</th>
+                        <th>动作</th>
+                        <th>资源</th>
+                        <th>详情</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLogs.map((log) => (
+                        <tr key={log.id}>
+                          <td>{formatDateTime(log.created_at)}</td>
+                          <td>{log.username || '-'}</td>
+                          <td>{log.role || '-'}</td>
+                          <td><code>{log.action}</code></td>
+                          <td>{log.resource_type}{log.resource_id ? `:${log.resource_id.slice(0, 8)}` : ''}</td>
+                          <td className="audit-details-cell" title={log.details || ''}>{log.details || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="ops-empty">暂无审计记录。</div>
+              )}
+            </section>
+          </div>
+        );
+
       case 'about':
         return (
           <div className="settings-section">
@@ -604,7 +880,7 @@ export const SettingsPage: React.FC = () => {
               {renderSection()}
 
               {/* Save Actions */}
-              {activeSection !== 'about' && activeSection !== 'account' && (
+              {activeSection !== 'about' && activeSection !== 'account' && activeSection !== 'operations' && (
                 <div className="settings-actions">
                   {saveError && (
                     <div className="password-error">{saveError}</div>

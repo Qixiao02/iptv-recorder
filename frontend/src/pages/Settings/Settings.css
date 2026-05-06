@@ -317,6 +317,222 @@
   color: var(--text-secondary);
 }
 
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.section-subtext {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.section-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.ops-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ops-summary-card {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.ops-summary-card.success {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.ops-summary-card.warning {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.ops-summary-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ops-summary-value {
+  margin-top: 14px;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ops-summary-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.ops-panel {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.ops-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ops-panel-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.ops-panel-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.ops-empty {
+  padding: 16px;
+  border: 1px dashed var(--border-default);
+  border-radius: 10px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.ops-alert-list,
+.ops-runbook-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ops-alert-item,
+.ops-runbook-item {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+.ops-alert-item.warning {
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.ops-alert-item.error,
+.ops-alert-item.critical {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.ops-alert-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ops-alert-level {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--brand-primary);
+}
+
+.ops-alert-time,
+.ops-runbook-desc,
+.ops-doc-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.ops-alert-message,
+.ops-runbook-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ops-alert-details {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ops-runbook-desc {
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.ops-doc-hint {
+  margin-top: 14px;
+}
+
+.audit-table-wrap {
+  overflow-x: auto;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.audit-table th {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+.audit-table td {
+  color: var(--text-secondary);
+}
+
+.audit-table td code {
+  color: var(--brand-primary);
+}
+
+.audit-details-cell {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Loading State */
 .loading-state {
   display: flex;
@@ -332,6 +548,20 @@
 
 /* Responsive */
 @media (max-width: 768px) {
+  .section-header-row,
+  .ops-grid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .ops-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-header-actions {
+    width: 100%;
+  }
+
   .settings-layout {
     grid-template-columns: 1fr;
   }
@@ -368,6 +598,10 @@
 
   .setting-control {
     width: 100%;
+  }
+
+  .audit-details-cell {
+    max-width: 200px;
   }
 }
 

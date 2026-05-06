@@ -196,6 +196,28 @@ export interface UiAlert extends SystemAlertData {
   read: boolean;
 }
 
+export interface AuditLog {
+  id: string;
+  user_id: string | null;
+  username: string | null;
+  role: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  details: string | null;
+  created_at: string;
+}
+
+export interface SystemHealth {
+  users_total: number;
+  channels_total: number;
+  schedules_total: number;
+  enabled_schedules: number;
+  running_tasks: number;
+  failed_tasks_24h: number;
+  last_audit_at: string | null;
+}
+
 export interface EpgSource {
   id: string;
   name: string;

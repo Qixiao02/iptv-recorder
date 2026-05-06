@@ -12,6 +12,7 @@
 | [部署指南](./deployment.md) | 生产环境部署、Docker 部署、运维监控 |
 | [发布清单](./release-checklist.md) | 发版前后检查项 |
 | [安全运维](./security-operations.md) | 首次部署、改密与密钥轮换 SOP |
+| [运维手册](./operations-runbook.md) | 日常巡检、清理、调度器维护与异常处置 |
 
 ## 快速开始
 
@@ -85,8 +86,9 @@ Database migrations completed
 | 定时调度 | ✅ 已完成 | 基于 Cron 表达式的定时录制计划 |
 | 录制引擎 | ✅ 已完成 | 集成 N_m3u8DL-RE，支持手动/自动录制 |
 | 任务管理 | ✅ 已完成 | 任务查询、取消任务、状态监控 |
-| WebSocket | ✅ 基础完成 | WebSocket 连接（待扩展实时推送） |
+| WebSocket | ✅ 已完成 | 任务进度、系统告警与前端实时状态同步 |
 | Web 界面 | ✅ 已完成 | React + Vite 管理界面 |
+| 运维面板 | ✅ 已完成 | 设置页内置系统健康、审计日志与运行维护入口 |
 
 ## 系统概览
 

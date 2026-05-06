@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { UpcomingTask, SystemConfig } from '@/types';
+import type { UpcomingTask, SystemConfig, AuditLog, SystemHealth } from '@/types';
 
 export interface ConfigUpdateRequest {
   storage?: {
@@ -38,4 +38,16 @@ export const getConfig = (): Promise<SystemConfig> => {
 // 更新系统配置
 export const updateConfig = (data: ConfigUpdateRequest): Promise<SystemConfig> => {
   return apiClient.post('/config', data).then((res) => res.data);
+};
+
+export const getSystemHealth = (): Promise<SystemHealth> => {
+  return apiClient.get('/system/health').then((res) => res.data);
+};
+
+export const getAuditLogs = (): Promise<AuditLog[]> => {
+  return apiClient.get('/audit/logs').then((res) => res.data);
+};
+
+export const runCleanup = (): Promise<{ deleted: number; message: string }> => {
+  return apiClient.post('/system/cleanup/run').then((res) => res.data);
 };
