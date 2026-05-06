@@ -19,7 +19,7 @@ use crate::core::event::EventBus;
 use crate::api::handlers::{
     index_handler,
     // 频道相关
-    list_channels, create_channel, get_channel, update_channel, delete_channel,
+    list_channels, create_channel, get_channel, update_channel, delete_channel, channel_stream,
     import_m3u_url, import_m3u_content, list_groups, test_channel,
     // 计划相关
     list_schedules, create_schedule, get_schedule, update_schedule, delete_schedule, toggle_schedule,
@@ -80,6 +80,7 @@ pub async fn create_router(
         // ===== 频道 API =====
         .route("/api/channels", get(list_channels))
         .route("/api/channels/{id}", get(get_channel))
+        .route("/api/channels/{id}/stream", get(channel_stream))
         .route("/api/channels/{id}/test", post(test_channel))
         .route("/api/channels/groups", get(list_groups))
 

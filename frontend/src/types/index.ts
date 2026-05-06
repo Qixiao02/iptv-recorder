@@ -12,6 +12,8 @@ export interface Channel {
   last_check_at: string | null;
   fail_count: number;
   metadata: Record<string, unknown>;
+  source_visibility: 'public' | 'private_server_only';
+  playback_strategy: 'auto' | 'hls_only' | 'proxy_only' | 'record_only';
   created_at: string;
   updated_at: string;
 }
@@ -21,6 +23,8 @@ export interface CreateChannelRequest {
   url: string;
   group_name?: string;
   logo_url?: string;
+  source_visibility?: 'public' | 'private_server_only';
+  playback_strategy?: 'auto' | 'hls_only' | 'proxy_only' | 'record_only';
 }
 
 export interface Schedule {

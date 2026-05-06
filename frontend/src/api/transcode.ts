@@ -9,12 +9,10 @@ export interface TranscodeResponse {
 // 启动转码
 export const startTranscode = (
   channelId: string,
-  url: string
 ): Promise<TranscodeResponse> => {
   return apiClient
     .post('/transcode/start', {
       channel_id: channelId,
-      url,
     })
     .then((res) => res.data);
 };

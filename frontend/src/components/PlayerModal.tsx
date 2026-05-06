@@ -3,14 +3,13 @@ import Hls, { type ErrorData } from 'hls.js/light';
 import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
 import { getStoredAuthToken } from '@/stores/authStore';
+import type { Channel } from '@/types';
 import './PlayerModal.css';
 
 interface PlayerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  channelId: string;
-  channelName: string;
-  channelUrl: string;
+  channel: Channel;
 }
 
 // 获取 API 基础 URL
@@ -19,10 +18,9 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 export const PlayerModal: React.FC<PlayerModalProps> = ({
   isOpen,
   onClose,
-  channelId,
-  channelName,
-  channelUrl,
+  channel,
 }) => {
+  const { id: channelId, name: channelName, url: channelUrl, source_visibility, playback_strategy } = channel;
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -72,7 +70,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       await cleanupTranscode();
 
       console.log('Starting transcode for channel:', channelId);
-      const result = await startTranscode(channelId, channelUrl);
+      const result = await startTranscode(channelId);
       sessionIdRef.current = result.session_id;
 
       const hlsUrl = `${API_BASE_URL}${result.playlist_url}`;
@@ -163,7 +161,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setLoading(false);
       setTranscoding(false);
     }
-  }, [channelId, channelUrl, cleanupTranscode]);
+  }, [channelId, cleanupTranscode]);
 
   // 播放 HLS 流
   const playHLSStream = useCallback(() => {
@@ -171,8 +169,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
     const video = videoRef.current;
     const token = getStoredAuthToken();
-    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}${
-      token ? `&token=${encodeURIComponent(token)}` : ''
+    const proxyUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+      token ? `?token=${encodeURIComponent(token)}` : ''
     }`;
 
     if (Hls.isSupported()) {
@@ -205,7 +203,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         video.play().catch(() => {});
       });
     }
-  }, [channelUrl]);
+  }, [channelId]);
 
   // 播放其他流
   const playOtherStream = useCallback(() => {
@@ -213,8 +211,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
     const video = videoRef.current;
     const token = getStoredAuthToken();
-    const proxyUrl = `${API_BASE_URL}/api/proxy/stream?url=${encodeURIComponent(channelUrl)}${
-      token ? `&token=${encodeURIComponent(token)}` : ''
+    const proxyUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+      token ? `?token=${encodeURIComponent(token)}` : ''
     }`;
 
     video.src = proxyUrl;
@@ -226,7 +224,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setError('视频格式不支持或加载失败');
       setLoading(false);
     });
-  }, [channelUrl]);
+  }, [channelId]);
 
   // 初始化播放
   useEffect(() => {
@@ -240,14 +238,22 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       const isHLS = channelUrl.includes('.m3u8') || channelUrl.includes('m3u8');
       const isUDP = channelUrl.includes('/udp/');
 
-      if (isUDP) {
-        // UDP 流需要转码
+      const mustUseHls =
+        playback_strategy === 'hls_only' ||
+        source_visibility === 'private_server_only' ||
+        isUDP;
+
+      if (playback_strategy === 'record_only') {
+        setError('该频道当前设置为仅允许录制，不提供在线预览。');
+        setLoading(false);
+        return;
+      }
+
+      if (mustUseHls) {
         playUDPStream();
-      } else if (isHLS) {
-        // HLS 流通过代理播放
+      } else if (isHLS || playback_strategy === 'proxy_only') {
         playHLSStream();
       } else {
-        // 其他流尝试直接播放
         playOtherStream();
       }
     }
@@ -255,7 +261,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     return () => {
       cleanupHls();
     };
-  }, [isOpen, channelUrl, cleanupHls, playUDPStream, playHLSStream, playOtherStream]);
+  }, [isOpen, channelUrl, cleanupHls, playUDPStream, playHLSStream, playOtherStream, playback_strategy, source_visibility]);
 
   // 关闭时停止转码
   const handleClose = useCallback(async () => {
@@ -265,14 +271,23 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   }, [cleanupHls, cleanupTranscode, onClose]);
 
   const handleOpenExternal = () => {
+    const token = getStoredAuthToken();
+    const serverStreamUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
     // 对于 UDP 流，使用转码后的 HLS 地址
     // 对于其他流，使用原始地址
-    const urlToOpen = hlsUrlRef.current || channelUrl;
+    const urlToOpen = hlsUrlRef.current
+      || (source_visibility === 'private_server_only' ? serverStreamUrl : channelUrl);
     window.open(urlToOpen, '_blank');
   };
 
   const handleCopyUrl = () => {
-    navigator.clipboard.writeText(channelUrl).then(() => {
+    const token = getStoredAuthToken();
+    const urlToCopy = source_visibility === 'private_server_only'
+      ? `${API_BASE_URL}/api/channels/${channelId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
+      : channelUrl;
+    navigator.clipboard.writeText(urlToCopy).then(() => {
       alert('流地址已复制到剪贴板');
     });
   };
@@ -310,6 +325,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         </div>
         <div className="player-modal-body">
           <div className="player-video-container">
+            {source_visibility === 'private_server_only' && !error && (
+              <div className="player-warning-banner">
+                私有源正在通过服务器中转播放，外网预览会占用服务器出口带宽。
+              </div>
+            )}
             {(loading || transcoding) && !error && (
               <div className="player-loading">
                 <Loader2 size={48} className="animate-spin" />

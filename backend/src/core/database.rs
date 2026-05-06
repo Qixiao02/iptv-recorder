@@ -75,6 +75,22 @@ async fn ensure_legacy_compatibility(pool: &Db) -> Result<()> {
         tracing::info!("Added missing output_dir column to legacy schedules table");
     }
 
+    let has_source_visibility = column_exists(pool, "channels", "source_visibility").await?;
+    if !has_source_visibility {
+        sqlx::query("ALTER TABLE channels ADD COLUMN source_visibility TEXT NOT NULL DEFAULT 'public'")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added missing source_visibility column to legacy channels table");
+    }
+
+    let has_playback_strategy = column_exists(pool, "channels", "playback_strategy").await?;
+    if !has_playback_strategy {
+        sqlx::query("ALTER TABLE channels ADD COLUMN playback_strategy TEXT NOT NULL DEFAULT 'auto'")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added missing playback_strategy column to legacy channels table");
+    }
+
     Ok(())
 }
 

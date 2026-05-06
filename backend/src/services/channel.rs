@@ -54,26 +54,23 @@ impl ChannelService {
 
     /// 创建频道
     pub async fn create(&self, req: CreateChannelRequest) -> Result<Channel> {
+        let req = normalize_channel_request(req);
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
-        let group_name = if req.group_name.is_empty() {
-            "Uncategorized".to_string()
-        } else {
-            req.group_name
-        };
-
         sqlx::query(
             r#"
-            INSERT INTO channels (id, name, url, group_name, logo_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO channels (id, name, url, group_name, logo_url, source_visibility, playback_strategy, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(&req.name)
         .bind(&req.url)
-        .bind(&group_name)
+        .bind(&req.group_name)
         .bind(&req.logo_url)
+        .bind(&req.source_visibility)
+        .bind(&req.playback_strategy)
         .bind(&now)
         .bind(&now)
         .execute(&self.ctx.db)
@@ -215,12 +212,13 @@ impl ChannelService {
 
     /// 更新频道
     pub async fn update(&self, id: &str, req: CreateChannelRequest) -> Result<Channel> {
+        let req = normalize_channel_request(req);
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
             r#"
             UPDATE channels
-            SET name = ?, url = ?, group_name = ?, logo_url = ?, updated_at = ?
+            SET name = ?, url = ?, group_name = ?, logo_url = ?, source_visibility = ?, playback_strategy = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
@@ -228,6 +226,8 @@ impl ChannelService {
         .bind(&req.url)
         .bind(&req.group_name)
         .bind(&req.logo_url)
+        .bind(&req.source_visibility)
+        .bind(&req.playback_strategy)
         .bind(&now)
         .bind(id)
         .execute(&self.ctx.db)
@@ -238,6 +238,7 @@ impl ChannelService {
 
     /// 导入频道，支持覆盖现有频道
     pub async fn import_channel(&self, req: CreateChannelRequest, overwrite: bool) -> Result<ImportChannelResult> {
+        let req = normalize_channel_request(req);
         if let Some(existing) = self.get_by_url(&req.url).await? {
             if overwrite {
                 self.update(&existing.id, req).await?;
@@ -341,6 +342,26 @@ impl ChannelService {
     }
 }
 
+fn normalize_channel_request(mut req: CreateChannelRequest) -> CreateChannelRequest {
+    if req.group_name.trim().is_empty() {
+        req.group_name = "Uncategorized".to_string();
+    }
+
+    req.source_visibility = match req.source_visibility.trim() {
+        "private_server_only" => "private_server_only".to_string(),
+        _ => "public".to_string(),
+    };
+
+    req.playback_strategy = match req.playback_strategy.trim() {
+        "hls_only" => "hls_only".to_string(),
+        "proxy_only" => "proxy_only".to_string(),
+        "record_only" => "record_only".to_string(),
+        _ => "auto".to_string(),
+    };
+
+    req
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +393,8 @@ mod tests {
             url: "http://example.com/live.m3u8".to_string(),
             group_name: "央视".to_string(),
             logo_url: None,
+            source_visibility: "public".to_string(),
+            playback_strategy: "auto".to_string(),
         };
         service.create(original).await.expect("create channel");
 
@@ -380,6 +403,8 @@ mod tests {
             url: "http://example.com/live.m3u8".to_string(),
             group_name: "高清".to_string(),
             logo_url: Some("http://example.com/logo.png".to_string()),
+            source_visibility: "public".to_string(),
+            playback_strategy: "auto".to_string(),
         };
 
         let result = service.import_channel(duplicate, false).await.expect("import channel");
@@ -404,6 +429,8 @@ mod tests {
             url: "http://example.com/live.m3u8".to_string(),
             group_name: "央视".to_string(),
             logo_url: None,
+            source_visibility: "public".to_string(),
+            playback_strategy: "auto".to_string(),
         }).await.expect("create channel");
 
         let result = service.import_channel(CreateChannelRequest {
@@ -411,6 +438,8 @@ mod tests {
             url: "http://example.com/live.m3u8".to_string(),
             group_name: "高清".to_string(),
             logo_url: Some("http://example.com/logo.png".to_string()),
+            source_visibility: "public".to_string(),
+            playback_strategy: "auto".to_string(),
         }, true).await.expect("import overwrite");
 
         assert!(matches!(result, ImportChannelResult::Updated));

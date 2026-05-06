@@ -195,6 +195,16 @@ export const Channels: React.FC = () => {
     }
   };
 
+  const getSourceBadge = (channel: Channel) => {
+    if (channel.playback_strategy === 'record_only') {
+      return <span className="badge badge-neutral">仅录制</span>;
+    }
+    if (channel.source_visibility === 'private_server_only') {
+      return <span className="badge badge-warning">私有源</span>;
+    }
+    return <span className="badge badge-success">公网源</span>;
+  };
+
   // 分页控制
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
@@ -448,7 +458,10 @@ export const Channels: React.FC = () => {
                     <code className="url-code">{channel.url.slice(0, 40)}...</code>
                   </td>
                   <td className="col-group">
-                    <span className="group-tag">{channel.group_name}</span>
+                    <div className="channel-group-stack">
+                      <span className="group-tag">{channel.group_name}</span>
+                      {getSourceBadge(channel)}
+                    </div>
                   </td>
                   <td className="col-status">{getStatusBadge(channel.status)}</td>
                   <td className="col-actions">
@@ -564,6 +577,7 @@ export const Channels: React.FC = () => {
               <div className="card-info">
                 <div className="card-name">{channel.name}</div>
                 <div className="card-group">{channel.group_name}</div>
+                <div className="card-group">{getSourceBadge(channel)}</div>
               </div>
               <div className="actions-cell">
                 <button
@@ -648,9 +662,7 @@ export const Channels: React.FC = () => {
           <PlayerModal
             isOpen
             onClose={() => setPlayerChannel(null)}
-            channelId={playerChannel.id}
-            channelName={playerChannel.name}
-            channelUrl={playerChannel.url}
+            channel={playerChannel}
           />
         )}
       </Suspense>

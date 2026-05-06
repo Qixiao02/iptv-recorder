@@ -76,6 +76,10 @@ pub struct Channel {
     pub fail_count: i32,
     #[serde(default = "default_metadata")]
     pub metadata: serde_json::Value,
+    #[serde(default = "default_source_visibility")]
+    pub source_visibility: String,
+    #[serde(default = "default_playback_strategy")]
+    pub playback_strategy: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -88,6 +92,14 @@ fn default_metadata() -> serde_json::Value {
     serde_json::json!({})
 }
 
+fn default_source_visibility() -> String {
+    "public".to_string()
+}
+
+fn default_playback_strategy() -> String {
+    "auto".to_string()
+}
+
 /// 创建频道请求
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
@@ -96,6 +108,10 @@ pub struct CreateChannelRequest {
     #[serde(default)]
     pub group_name: String,
     pub logo_url: Option<String>,
+    #[serde(default = "default_source_visibility")]
+    pub source_visibility: String,
+    #[serde(default = "default_playback_strategy")]
+    pub playback_strategy: String,
 }
 
 /// 录制计划

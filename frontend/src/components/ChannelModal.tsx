@@ -20,6 +20,8 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
     url: '',
     group_name: '',
     logo_url: '',
+    source_visibility: 'public',
+    playback_strategy: 'auto',
   });
 
   useEffect(() => {
@@ -29,9 +31,18 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
         url: channel.url,
         group_name: channel.group_name,
         logo_url: channel.logo_url || '',
+        source_visibility: channel.source_visibility,
+        playback_strategy: channel.playback_strategy,
       });
     } else {
-      setForm({ name: '', url: '', group_name: '', logo_url: '' });
+      setForm({
+        name: '',
+        url: '',
+        group_name: '',
+        logo_url: '',
+        source_visibility: 'public',
+        playback_strategy: 'auto',
+      });
     }
   }, [channel]);
 
@@ -65,7 +76,14 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   };
 
   const handleClose = () => {
-    setForm({ name: '', url: '', group_name: '', logo_url: '' });
+    setForm({
+      name: '',
+      url: '',
+      group_name: '',
+      logo_url: '',
+      source_visibility: 'public',
+      playback_strategy: 'auto',
+    });
     onClose();
   };
 
@@ -125,6 +143,46 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
               onChange={(e) => setForm({ ...form, logo_url: e.target.value })}
             />
           </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>源可见性</label>
+              <select
+                className="input"
+                value={form.source_visibility}
+                onChange={(e) => setForm({
+                  ...form,
+                  source_visibility: e.target.value as NonNullable<CreateChannelRequest['source_visibility']>,
+                })}
+              >
+                <option value="public">公网源 / 可公开访问</option>
+                <option value="private_server_only">私有源 / 仅服务端可访问</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>播放策略</label>
+              <select
+                className="input"
+                value={form.playback_strategy}
+                onChange={(e) => setForm({
+                  ...form,
+                  playback_strategy: e.target.value as NonNullable<CreateChannelRequest['playback_strategy']>,
+                })}
+              >
+                <option value="auto">自动选择</option>
+                <option value="hls_only">强制 HLS 中转</option>
+                <option value="proxy_only">仅代理预览</option>
+                <option value="record_only">仅允许录制</option>
+              </select>
+            </div>
+          </div>
+
+          {form.source_visibility === 'private_server_only' && (
+            <div className="form-hint">
+              私有源只允许服务端/NAS 拉流，外网预览会通过服务端中转，可能占用服务器出口带宽。
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">

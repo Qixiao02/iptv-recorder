@@ -292,6 +292,8 @@ async fn import_channels(
             url: channel.url.clone(),
             group_name: channel.group.clone(),
             logo_url: channel.logo.clone(),
+            source_visibility: "public".to_string(),
+            playback_strategy: "auto".to_string(),
         };
 
         match service.import_channel(create_req, overwrite).await {
@@ -793,13 +795,47 @@ pub async fn stream_proxy(
     authorize_stream_proxy(&headers, query.token.as_deref())?;
     validate_proxy_url(&query.url).await?;
 
+    proxy_stream_response(&query.url).await
+}
+
+pub async fn channel_stream(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+    authorize_stream_proxy(&headers, query.token.as_deref())?;
+
+    let ctx = ServiceContext::new(db, config);
+    let service = ChannelService::new(ctx);
+    let channel = service.get_by_id(&id).await.map_err(not_found_error)?;
+
+    if channel.playback_strategy == "record_only" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "playback_disabled".to_string(),
+                details: Some("该频道仅允许录制，不允许在线预览".to_string()),
+            }),
+        ));
+    }
+
+    if channel.source_visibility != "private_server_only" {
+        validate_proxy_url(&channel.url).await?;
+    }
+
+    proxy_stream_response(&channel.url).await
+}
+
+async fn proxy_stream_response(url: &str) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| internal_error(anyhow::anyhow!("创建 HTTP 客户端失败: {}", e)))?;
 
     let response = client
-        .get(&query.url)
+        .get(url)
         .send()
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("请求流失败: {}", e)))?;
@@ -990,8 +1026,6 @@ use tokio::fs;
 pub struct StartTranscodeRequest {
     /// 频道 ID
     pub channel_id: String,
-    /// 流 URL
-    pub url: String,
 }
 
 /// 转码响应
@@ -1005,12 +1039,19 @@ pub struct TranscodeResponse {
 
 /// 启动转码
 pub async fn start_transcode(
-    State((_db, _scheduler, _process_manager, _config)): State<AppState>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Json(req): Json<StartTranscodeRequest>,
 ) -> Result<Json<TranscodeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let ctx = ServiceContext::new(db, config);
+    let channel_service = ChannelService::new(ctx);
+    let channel = channel_service
+        .get_by_id(&req.channel_id)
+        .await
+        .map_err(not_found_error)?;
+
     let session = transcode_service
-        .start_transcode(&req.channel_id, &req.url)
+        .start_transcode(&req.channel_id, &channel.url)
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("启动转码失败: {}", e)))?;
 
