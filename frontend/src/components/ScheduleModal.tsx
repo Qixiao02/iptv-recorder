@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createSchedule, updateSchedule } from '@/api/schedules';
 import { getAllChannels } from '@/api/channels';
 import { X, Loader2, Settings, HelpCircle } from 'lucide-react';
-import { Select } from 'antd';
 import type { Schedule, CreateScheduleRequest } from '@/types';
 import './Modal.css';
 
@@ -186,22 +185,18 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
 
           <div className="form-group">
             <label>选择频道 *</label>
-            <Select
-              showSearch
-              className="channel-select"
-              placeholder="搜索并选择频道"
-              value={form.channel_id || undefined}
-              onChange={(value) => setForm({ ...form, channel_id: value })}
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              options={channels?.map((ch) => ({
-                value: ch.id,
-                label: `${ch.name} (${ch.group_name})`,
-              }))}
-              notFoundContent="没有找到匹配的频道"
-              allowClear
-            />
+            <select
+              className="input channel-select"
+              value={form.channel_id}
+              onChange={(e) => setForm({ ...form, channel_id: e.target.value })}
+            >
+              <option value="">请选择频道</option>
+              {channels?.map((ch) => (
+                <option key={ch.id} value={ch.id}>
+                  {ch.name} ({ch.group_name})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="form-group">

@@ -1,7 +1,5 @@
 import { Suspense, lazy, useEffect, type ReactNode } from 'react';
 import { RouterProvider, createBrowserRouter, Navigate } from 'react-router-dom';
-import { ConfigProvider, App as AntdApp } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -168,11 +166,7 @@ function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <ConfigProvider locale={zhCN}>
-          <AntdApp>
-            <RouterProvider router={router} />
-          </AntdApp>
-        </ConfigProvider>
+        <RouterProvider router={router} />
       </QueryClientProvider>
     </ErrorBoundary>
   );
