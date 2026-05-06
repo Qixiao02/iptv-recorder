@@ -195,3 +195,29 @@ export interface UiAlert extends SystemAlertData {
   created_at: string;
   read: boolean;
 }
+
+export interface EpgSource {
+  id: string;
+  name: string;
+  source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EpgProgram {
+  id: string;
+  source_id: string;
+  channel_ref: string;
+  title: string;
+  description: string | null;
+  category: string | null;
+  start_at: string;
+  end_at: string;
+  created_at: string;
+}
+
+export interface ImportEpgRequest {
+  name: string;
+  url?: string;
+  content?: string;
+}

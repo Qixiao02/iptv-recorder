@@ -16,6 +16,7 @@ import {
   CircleCheck,
   CircleX,
   Tv,
+  CalendarDays,
   Loader2,
   Zap,
   ChevronLeft,
@@ -27,6 +28,8 @@ import './Channels.css';
 const ImportM3UModal = lazy(() => import('@/components/ImportM3UModal'));
 const ChannelModal = lazy(() => import('@/components/ChannelModal'));
 const PlayerModal = lazy(() => import('@/components/PlayerModal'));
+const EpgImportModal = lazy(() => import('@/components/EpgImportModal'));
+const EpgProgramsModal = lazy(() => import('@/components/EpgProgramsModal'));
 
 type ViewMode = 'table' | 'card';
 
@@ -44,6 +47,8 @@ export const Channels: React.FC = () => {
   const [batchTesting, setBatchTesting] = useState(false);
   const [testProgress, setTestProgress] = useState({ current: 0, total: 0 });
   const [playerChannel, setPlayerChannel] = useState<Channel | null>(null);
+  const [showEpgImportModal, setShowEpgImportModal] = useState(false);
+  const [epgChannel, setEpgChannel] = useState<Channel | null>(null);
 
   // 分页状态
   const [page, setPage] = useState(1);
@@ -168,6 +173,10 @@ export const Channels: React.FC = () => {
     setShowChannelModal(true);
   };
 
+  const handleOpenEpgPrograms = (channel: Channel) => {
+    setEpgChannel(channel);
+  };
+
   const handleCloseChannelModal = () => {
     setShowChannelModal(false);
     setEditingChannel(null);
@@ -272,6 +281,8 @@ export const Channels: React.FC = () => {
   const shouldRenderImportModal = showImportModal;
   const shouldRenderChannelModal = showChannelModal || editingChannel !== null;
   const shouldRenderPlayerModal = playerChannel !== null;
+  const shouldRenderEpgImportModal = showEpgImportModal;
+  const shouldRenderEpgProgramsModal = epgChannel !== null;
 
   return (
     <div className="channels-page">
@@ -287,6 +298,10 @@ export const Channels: React.FC = () => {
           <button className="btn btn-ghost" onClick={() => setShowImportModal(true)}>
             <Upload size={16} />
             导入 M3U
+          </button>
+          <button className="btn btn-ghost" onClick={() => setShowEpgImportModal(true)}>
+            <CalendarDays size={16} />
+            导入 EPG
           </button>
           <button className="btn btn-primary" onClick={() => setShowChannelModal(true)}>
             <Plus size={16} />
@@ -462,6 +477,13 @@ export const Channels: React.FC = () => {
                       </button>
                       <button
                         className="action-btn"
+                        title="节目单"
+                        onClick={() => handleOpenEpgPrograms(channel)}
+                      >
+                        <CalendarDays size={16} />
+                      </button>
+                      <button
+                        className="action-btn"
                         title="编辑"
                         onClick={() => handleEditChannel(channel)}
                       >
@@ -543,9 +565,45 @@ export const Channels: React.FC = () => {
                 <div className="card-name">{channel.name}</div>
                 <div className="card-group">{channel.group_name}</div>
               </div>
-              <button className="card-menu">
-                <MoreHorizontal size={16} />
-              </button>
+              <div className="actions-cell">
+                <button
+                  className="action-btn"
+                  title="节目单"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenEpgPrograms(channel);
+                  }}
+                >
+                  <CalendarDays size={16} />
+                </button>
+                <button
+                  className="action-btn"
+                  title="编辑"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditChannel(channel);
+                  }}
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  className="action-btn danger"
+                  title="删除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteMutation.mutate(channel.id);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </button>
+                <button
+                  className="action-btn"
+                  title="更多"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -567,6 +625,22 @@ export const Channels: React.FC = () => {
             isOpen={showChannelModal}
             onClose={handleCloseChannelModal}
             channel={editingChannel}
+          />
+        )}
+
+        {shouldRenderEpgImportModal && (
+          <EpgImportModal
+            isOpen={showEpgImportModal}
+            onClose={() => setShowEpgImportModal(false)}
+          />
+        )}
+
+        {shouldRenderEpgProgramsModal && epgChannel && (
+          <EpgProgramsModal
+            isOpen
+            onClose={() => setEpgChannel(null)}
+            channelRef={epgChannel.name}
+            channelName={epgChannel.name}
           />
         )}
 
