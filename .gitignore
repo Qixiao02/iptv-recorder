@@ -27,6 +27,8 @@ backend/data/
 backend/logs/
 backend/recordings/
 backend/tmp/
+backend/.codex-run/
+frontend/.codex-run/
 
 # Custom config (keep default.toml, ignore overrides)
 backend/config/config.toml
