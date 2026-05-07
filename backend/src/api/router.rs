@@ -65,6 +65,7 @@ pub async fn create_router(
         .route("/api/auth/login", post(login))
         // 流代理（播放器通过 token 参数鉴权）
         .route("/api/proxy/stream", get(stream_proxy))
+        .route("/api/channels/{id}/stream", get(channel_stream))
         // HLS 文件（直播流不需要认证）
         .route("/api/transcode/hls/{session_id}/{filename}", get(get_hls_file))
         // WebSocket 通过 query token 参数验证
@@ -80,7 +81,6 @@ pub async fn create_router(
         // ===== 频道 API =====
         .route("/api/channels", get(list_channels))
         .route("/api/channels/{id}", get(get_channel))
-        .route("/api/channels/{id}/stream", get(channel_stream))
         .route("/api/channels/{id}/test", post(test_channel))
         .route("/api/channels/groups", get(list_groups))
 

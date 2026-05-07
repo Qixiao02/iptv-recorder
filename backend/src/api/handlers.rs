@@ -792,7 +792,7 @@ pub async fn stream_proxy(
     headers: HeaderMap,
     Query(query): Query<StreamProxyQuery>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    authorize_stream_proxy(&headers, query.token.as_deref())?;
+    let _claims = authorize_stream_proxy(&headers, query.token.as_deref())?;
     validate_proxy_url(&query.url).await?;
 
     proxy_stream_response(&query.url).await
@@ -804,7 +804,7 @@ pub async fn channel_stream(
     Path(id): Path<String>,
     Query(query): Query<WsQuery>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    authorize_stream_proxy(&headers, query.token.as_deref())?;
+    let _claims = authorize_stream_proxy(&headers, query.token.as_deref())?;
 
     let ctx = ServiceContext::new(db, config);
     let service = ChannelService::new(ctx);
@@ -872,7 +872,7 @@ async fn proxy_stream_response(url: &str) -> Result<Response<Body>, (StatusCode,
 fn authorize_stream_proxy(
     headers: &HeaderMap,
     query_token: Option<&str>,
-) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Claims, (StatusCode, Json<ErrorResponse>)> {
     let bearer_token = headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
@@ -896,9 +896,7 @@ fn authorize_stream_proxy(
                 details: Some(e.to_string()),
             }),
         )
-    })?;
-
-    Ok(())
+    })
 }
 
 async fn validate_proxy_url(url: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
@@ -1039,21 +1037,46 @@ pub struct TranscodeResponse {
 
 /// 启动转码
 pub async fn start_transcode(
+    Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Json(req): Json<StartTranscodeRequest>,
 ) -> Result<Json<TranscodeResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let ctx = ServiceContext::new(db, config);
+    let ctx = ServiceContext::new(db.clone(), config.clone());
     let channel_service = ChannelService::new(ctx);
     let channel = channel_service
         .get_by_id(&req.channel_id)
         .await
         .map_err(not_found_error)?;
 
+    if channel.playback_strategy == "record_only" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "playback_disabled".to_string(),
+                details: Some("该频道仅允许录制，不提供在线预览".to_string()),
+            }),
+        ));
+    }
+
     let session = transcode_service
-        .start_transcode(&req.channel_id, &channel.url)
+        .start_transcode(&req.channel_id, &channel.url, &claims.sub, &claims.username)
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("启动转码失败: {}", e)))?;
+
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "playback.session_start",
+        "channel",
+        Some(&channel.id),
+        Some(format!(
+            "session_id={}, visibility={}, strategy={}",
+            session.id, channel.source_visibility, channel.playback_strategy
+        )),
+    )
+    .await;
 
     Ok(Json(TranscodeResponse {
         session_id: session.id.clone(),
@@ -1063,14 +1086,46 @@ pub async fn start_transcode(
 
 /// 停止转码
 pub async fn stop_transcode(
-    State((_db, _scheduler, _process_manager, _config)): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let session = transcode_service.get_session(&session_id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "session_not_found".to_string(),
+                details: Some("转码会话不存在".to_string()),
+            }),
+        )
+    })?;
+
+    if claims.sub != session.owner_user_id && !claims.can_manage_content() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "forbidden".to_string(),
+                details: Some("不能停止其他用户的预览会话".to_string()),
+            }),
+        ));
+    }
+
     transcode_service
         .stop_transcode(&session_id)
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("停止转码失败: {}", e)))?;
+
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "playback.session_stop",
+        "channel",
+        Some(&session.channel_id),
+        Some(format!("session_id={}, owner={}", session.id, session.owner_username)),
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -16,6 +16,8 @@ use tracing::{debug, info, warn};
 pub struct TranscodeSession {
     pub id: String,
     pub channel_id: String,
+    pub owner_user_id: String,
+    pub owner_username: String,
     pub source_url: String,
     pub hls_dir: PathBuf,
     pub playlist_path: PathBuf,
@@ -37,6 +39,8 @@ pub struct TranscodeService {
     hls_base_dir: PathBuf,
     /// 会话超时时间（秒）
     session_timeout_secs: u64,
+    /// 单用户最大预览会话数
+    max_sessions_per_user: usize,
 }
 
 impl TranscodeService {
@@ -53,6 +57,7 @@ impl TranscodeService {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             hls_base_dir,
             session_timeout_secs: 300, // 5 分钟超时
+            max_sessions_per_user: 2,
         }
     }
 
@@ -71,15 +76,34 @@ impl TranscodeService {
         &self,
         channel_id: &str,
         source_url: &str,
+        owner_user_id: &str,
+        owner_username: &str,
     ) -> Result<TranscodeSession> {
-        // 检查是否已有该频道的转码会话
+        // 同一用户重复打开同一频道时复用现有会话，避免反复拉起 FFmpeg。
         {
             let sessions = self.sessions.read().await;
             for (_, active) in sessions.iter() {
-                if active.session.channel_id == channel_id {
+                if active.session.channel_id == channel_id
+                    && active.session.owner_user_id == owner_user_id
+                {
                     info!("Transcode session already exists for channel {}", channel_id);
                     return Ok(active.session.clone());
                 }
+            }
+        }
+
+        {
+            let sessions = self.sessions.read().await;
+            let active_for_user = sessions
+                .values()
+                .filter(|active| active.session.owner_user_id == owner_user_id)
+                .count();
+
+            if active_for_user >= self.max_sessions_per_user {
+                return Err(anyhow::anyhow!(
+                    "单个用户最多只能同时预览 {} 个转码会话",
+                    self.max_sessions_per_user
+                ));
             }
         }
 
@@ -141,6 +165,8 @@ impl TranscodeService {
         let session = TranscodeSession {
             id: session_id.clone(),
             channel_id: channel_id.to_string(),
+            owner_user_id: owner_user_id.to_string(),
+            owner_username: owner_username.to_string(),
             source_url: source_url.to_string(),
             hls_dir,
             playlist_path,
