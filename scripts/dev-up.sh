@@ -64,7 +64,6 @@ start_frontend() {
     cd "$FRONTEND_DIR"
     nohup env \
       VITE_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT" \
-      VITE_API_URL="http://$ACCESS_HOST_FALLBACK:$BACKEND_PORT" \
       pnpm exec vite --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
     echo $! > "$FRONTEND_LOG_DIR/frontend.pid"
   )

@@ -12,8 +12,17 @@ interface PlayerModalProps {
   channel: Channel;
 }
 
-// 获取 API 基础 URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const buildApiPath = (path: string): string => {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+  return path.startsWith('/') ? path : `/${path}`;
+};
+
+const buildApiUrl = (path: string): string => {
+  const normalizedPath = buildApiPath(path);
+  return new URL(normalizedPath, window.location.origin).toString();
+};
 
 export const PlayerModal: React.FC<PlayerModalProps> = ({
   isOpen,
@@ -73,7 +82,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       const result = await startTranscode(channelId);
       sessionIdRef.current = result.session_id;
 
-      const hlsUrl = `${API_BASE_URL}${result.playlist_url}`;
+      const hlsUrl = buildApiUrl(result.playlist_url);
       hlsUrlRef.current = hlsUrl; // 保存 HLS URL 供外部播放器使用
       console.log('Transcode started, playlist URL:', hlsUrl);
 
@@ -169,9 +178,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
     const video = videoRef.current;
     const token = getStoredAuthToken();
-    const proxyUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+    const proxyUrl = buildApiUrl(`/api/channels/${channelId}/stream${
       token ? `?token=${encodeURIComponent(token)}` : ''
-    }`;
+    }`);
 
     if (Hls.isSupported()) {
       const hls = new Hls({
@@ -211,9 +220,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
     const video = videoRef.current;
     const token = getStoredAuthToken();
-    const proxyUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+    const proxyUrl = buildApiUrl(`/api/channels/${channelId}/stream${
       token ? `?token=${encodeURIComponent(token)}` : ''
-    }`;
+    }`);
 
     video.src = proxyUrl;
     video.addEventListener('loadeddata', () => {
@@ -272,9 +281,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   const handleOpenExternal = () => {
     const token = getStoredAuthToken();
-    const serverStreamUrl = `${API_BASE_URL}/api/channels/${channelId}/stream${
+    const serverStreamUrl = buildApiUrl(`/api/channels/${channelId}/stream${
       token ? `?token=${encodeURIComponent(token)}` : ''
-    }`;
+    }`);
     // 对于 UDP 流，使用转码后的 HLS 地址
     // 对于其他流，使用原始地址
     const urlToOpen = hlsUrlRef.current
@@ -285,7 +294,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const handleCopyUrl = () => {
     const token = getStoredAuthToken();
     const urlToCopy = source_visibility === 'private_server_only'
-      ? `${API_BASE_URL}/api/channels/${channelId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
+      ? buildApiUrl(`/api/channels/${channelId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`)
       : channelUrl;
     navigator.clipboard.writeText(urlToCopy).then(() => {
       alert('流地址已复制到剪贴板');
