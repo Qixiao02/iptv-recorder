@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKEND_PORT="${BACKEND_PORT:-3000}"
-FRONTEND_PORT="${FRONTEND_PORT:-5175}"
+BACKEND_PORT="${BACKEND_PORT:-3033}"
+FRONTEND_PORT="${FRONTEND_PORT:-5778}"
 
 stop_port() {
   local name="$1"

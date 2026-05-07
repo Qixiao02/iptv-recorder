@@ -9,9 +9,9 @@ FRONTEND_LOG_DIR="$FRONTEND_DIR/.codex-run"
 BACKEND_LOG="$BACKEND_LOG_DIR/backend.log"
 FRONTEND_LOG="$FRONTEND_LOG_DIR/frontend.log"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
-BACKEND_PORT="${BACKEND_PORT:-3000}"
+BACKEND_PORT="${BACKEND_PORT:-3033}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
-FRONTEND_PORT="${FRONTEND_PORT:-5175}"
+FRONTEND_PORT="${FRONTEND_PORT:-5778}"
 JWT_SECRET="${IPTV_JWT_SECRET:-abcdefghijklmnopqrstuvwxyz123456}"
 
 detect_access_host() {
@@ -62,7 +62,10 @@ start_frontend() {
   echo "Starting frontend on $FRONTEND_HOST:$FRONTEND_PORT ..."
   (
     cd "$FRONTEND_DIR"
-    nohup pnpm exec vite --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
+    nohup env \
+      VITE_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT" \
+      VITE_API_URL="http://$ACCESS_HOST_FALLBACK:$BACKEND_PORT" \
+      pnpm exec vite --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
     echo $! > "$FRONTEND_LOG_DIR/frontend.pid"
   )
 }
@@ -71,15 +74,17 @@ require_cmd lsof
 require_cmd cargo
 require_cmd pnpm
 
+ACCESS_HOST_FALLBACK="${ACCESS_HOST:-$(detect_access_host)}"
+if [[ -z "$ACCESS_HOST_FALLBACK" ]]; then
+  ACCESS_HOST_FALLBACK="127.0.0.1"
+fi
+
 start_backend
 start_frontend
 
 sleep 2
 
-ACCESS_HOST="${ACCESS_HOST:-$(detect_access_host)}"
-if [[ -z "$ACCESS_HOST" ]]; then
-  ACCESS_HOST="127.0.0.1"
-fi
+ACCESS_HOST="$ACCESS_HOST_FALLBACK"
 
 echo
 echo "Frontend bind: http://$FRONTEND_HOST:$FRONTEND_PORT"

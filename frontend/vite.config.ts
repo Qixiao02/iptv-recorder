@@ -64,11 +64,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_BACKEND_URL || 'http://127.0.0.1:3033',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:3000',
+        target: (process.env.VITE_BACKEND_URL || 'http://127.0.0.1:3033').replace(/^http/, 'ws'),
         ws: true,
       }
     }
