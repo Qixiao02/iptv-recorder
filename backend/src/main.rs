@@ -33,10 +33,10 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use crate::core::event::EventBus;
 
 mod api;
+mod config;
 mod core;
 mod models;
 mod services;
-mod config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -65,7 +65,10 @@ async fn main() -> Result<()> {
     // 初始化数据库
     let db_path = config.database.path.to_string_lossy().to_string();
     let db = core::database::init(&db_path, config.database.pool_size).await?;
-    info!("🗄️  Database initialized: {}", config.database.path.display());
+    info!(
+        "🗄️  Database initialized: {}",
+        config.database.path.display()
+    );
 
     // 初始化 ProcessManager
     let recorder_path = config.recorder.executable.clone();
@@ -89,17 +92,15 @@ async fn main() -> Result<()> {
 
     // 启动 Cron 调度器
     let scheduler = Arc::new(
-        services::SchedulerManager::new(
-            db.clone(),
-            config.clone(),
-            process_manager.clone(),
-        ).await?
+        services::SchedulerManager::new(db.clone(), config.clone(), process_manager.clone())
+            .await?,
     );
     scheduler.start().await?;
     info!("📅 Cron Scheduler started");
 
     // 初始化转码服务
-    let hls_dir = config.storage.temp_dir.join("hls");
+    let hls_dir = config.storage.preview_hls_dir();
+    info!("🧠 Preview HLS temp dir: {}", hls_dir.display());
     let transcode_service = Arc::new(services::TranscodeService::new(hls_dir));
     transcode_service.clone().start_cleanup_task();
     info!("🎬 Transcode Service initialized");
@@ -112,7 +113,8 @@ async fn main() -> Result<()> {
         config.clone(),
         transcode_service.clone(),
         event_bus.clone(),
-    ).await?;
+    )
+    .await?;
     let addr = format!("{}:{}", config.server.host, config.server.port);
     info!("🌐 Web server listening on http://{}", addr);
 

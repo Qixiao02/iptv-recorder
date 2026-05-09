@@ -25,6 +25,8 @@ pool_size = 10
 recordings_dir = "data/recordings"
 # 临时文件目录
 temp_dir = "data/.tmp"
+# 预览 HLS 临时目录（留空时 Linux/NAS 会优先尝试 /dev/shm/iptv-recorder-hls，减少硬盘写入）
+# preview_temp_dir = "/dev/shm/iptv-recorder-hls"
 # 最小剩余空间 (MB)，低于此值暂停新任务
 min_free_space_mb = 1024
 

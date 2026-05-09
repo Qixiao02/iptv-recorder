@@ -6,7 +6,10 @@
 //! - `IPTV__SERVER__HOST=0.0.0.0`
 //! - `IPTV__DATABASE__PATH=/path/to/db`
 
-use figment::{Figment, providers::{Env, Format, Serialized, Toml, Yaml}};
+use figment::{
+    providers::{Env, Format, Serialized, Toml, Yaml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -72,6 +75,10 @@ pub struct StorageConfig {
     /// 临时文件目录
     #[serde(default = "default_temp_dir")]
     pub temp_dir: PathBuf,
+
+    /// 预览 HLS 临时目录，优先建议使用内存文件系统
+    #[serde(default)]
+    pub preview_temp_dir: Option<PathBuf>,
 
     /// 最小剩余空间（MB）
     #[serde(default = "default_min_space")]
@@ -276,8 +283,25 @@ impl Default for StorageConfig {
         Self {
             recordings_dir: default_recordings_dir(),
             temp_dir: default_temp_dir(),
+            preview_temp_dir: None,
             min_free_space_mb: default_min_space(),
         }
+    }
+}
+
+impl StorageConfig {
+    /// 预览 HLS 优先使用内存文件系统，避免频繁切台时伤盘。
+    pub fn preview_hls_dir(&self) -> PathBuf {
+        if let Some(path) = &self.preview_temp_dir {
+            return path.clone();
+        }
+
+        let shm_dir = PathBuf::from("/dev/shm");
+        if shm_dir.exists() {
+            return shm_dir.join("iptv-recorder-hls");
+        }
+
+        self.temp_dir.join("hls")
     }
 }
 
@@ -327,15 +351,13 @@ pub fn load() -> anyhow::Result<LoadedConfig> {
     let config_path = find_config_file()?;
 
     let figment = if let Some(ref path) = config_path {
-        let extension = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         match extension {
-            "toml" => Figment::from(Toml::file(path))
-                .merge(Env::prefixed("IPTV__").split("__")),
-            "yaml" | "yml" => Figment::from(Yaml::file(path))
-                .merge(Env::prefixed("IPTV__").split("__")),
+            "toml" => Figment::from(Toml::file(path)).merge(Env::prefixed("IPTV__").split("__")),
+            "yaml" | "yml" => {
+                Figment::from(Yaml::file(path)).merge(Env::prefixed("IPTV__").split("__"))
+            }
             _ => anyhow::bail!("不支持的配置文件格式: {}", extension),
         }
     } else {

@@ -1,29 +1,29 @@
 //! HTTP 请求处理器
 
 use axum::{
-    extract::{Path, Query, State, Extension},
+    body::Body,
+    extract::{Extension, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
-    body::Body,
 };
+use reqwest;
 use serde::Deserialize;
 use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
 use tracing::error as tracing_error;
-use reqwest;
 
 use crate::config::Config;
-use crate::core::ProcessManager;
 use crate::core::event::EventBus;
+use crate::core::ProcessManager;
 use crate::models::{
-    Channel, CreateChannelRequest, CreateScheduleRequest, ManualRecordRequest,
-    Schedule, Task, ErrorResponse, ImportM3UResponse, AuditLog, SystemHealth, EpgSource, EpgProgram,
+    AuditLog, Channel, CreateChannelRequest, CreateScheduleRequest, EpgProgram, EpgSource,
+    ErrorResponse, ImportM3UResponse, ManualRecordRequest, Schedule, SystemHealth, Task,
 };
 use crate::services::{
-    ChannelService, ScheduleService, RecordingService, ServiceContext,
-    M3UParser, CronTrigger, UpcomingTask, SchedulerManager,
-    ConfigService, ConfigUpdateRequest, ChannelTestResult, PaginationParams,
-    AuthService, ImportChannelResult, AuditService, CleanupService, EpgService, ImportEpgRequest, Claims,
+    AuditService, AuthService, ChannelService, ChannelTestResult, Claims, CleanupService,
+    ConfigService, ConfigUpdateRequest, CronTrigger, EpgService, ImportChannelResult,
+    ImportEpgRequest, M3UParser, PaginationParams, RecordingService, ScheduleService,
+    SchedulerManager, ServiceContext, UpcomingTask,
 };
 
 /// 应用状态
@@ -45,7 +45,13 @@ async fn record_audit(
 ) {
     let service = AuditService::new(ServiceContext::new(db, config));
     if let Err(e) = service
-        .record(claims, action, resource_type, resource_id, details.as_deref())
+        .record(
+            claims,
+            action,
+            resource_type,
+            resource_id,
+            details.as_deref(),
+        )
         .await
     {
         tracing_error!("Failed to record audit log: {}", e);
@@ -143,7 +149,16 @@ pub async fn update_channel(
 
     match service.update(&id, req).await {
         Ok(channel) => {
-            record_audit(db, config, Some(&claims), "channel.update", "channel", Some(&id), None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "channel.update",
+                "channel",
+                Some(&id),
+                None,
+            )
+            .await;
             Ok(Json(channel))
         }
         Err(e) => Err(internal_error(e)),
@@ -160,7 +175,16 @@ pub async fn delete_channel(
 
     match service.delete(&id).await {
         Ok(_) => {
-            record_audit(db, config, Some(&claims), "channel.delete", "channel", Some(&id), None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "channel.delete",
+                "channel",
+                Some(&id),
+                None,
+            )
+            .await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => Err(internal_error(e)),
@@ -212,16 +236,19 @@ pub async fn import_m3u_url(
     Json(req): Json<ImportM3URequest>,
 ) -> Result<Json<ImportM3UResponse>, (StatusCode, Json<ErrorResponse>)> {
     let url = req.url.as_ref().ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse {
-            error: "missing_url".to_string(),
-            details: Some("必须提供 URL 或 content".to_string()),
-        }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "missing_url".to_string(),
+                details: Some("必须提供 URL 或 content".to_string()),
+            }),
+        )
     })?;
 
     // 解析 M3U
-    let parse_result = M3UParser::from_url(url).await.map_err(|e| {
-        internal_error(anyhow::anyhow!("解析 M3U 失败: {}", e))
-    })?;
+    let parse_result = M3UParser::from_url(url)
+        .await
+        .map_err(|e| internal_error(anyhow::anyhow!("解析 M3U 失败: {}", e)))?;
 
     // 导入频道
     let response = import_channels(db.clone(), config.clone(), parse_result, req.overwrite).await?;
@@ -245,16 +272,18 @@ pub async fn import_m3u_content(
     Json(req): Json<ImportM3URequest>,
 ) -> Result<Json<ImportM3UResponse>, (StatusCode, Json<ErrorResponse>)> {
     let content = req.content.as_ref().ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse {
-            error: "missing_content".to_string(),
-            details: Some("必须提供 content 或 URL".to_string()),
-        }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "missing_content".to_string(),
+                details: Some("必须提供 content 或 URL".to_string()),
+            }),
+        )
     })?;
 
     // 解析 M3U
-    let parse_result = M3UParser::parse(content).map_err(|e| {
-        internal_error(anyhow::anyhow!("解析 M3U 失败: {}", e))
-    })?;
+    let parse_result = M3UParser::parse(content)
+        .map_err(|e| internal_error(anyhow::anyhow!("解析 M3U 失败: {}", e)))?;
 
     // 导入频道
     let response = import_channels(db.clone(), config.clone(), parse_result, req.overwrite).await?;
@@ -382,14 +411,26 @@ pub async fn update_schedule(
     let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = ScheduleService::new(ctx);
 
-    let schedule = service.update(&id, req.clone()).await.map_err(internal_error)?;
+    let schedule = service
+        .update(&id, req.clone())
+        .await
+        .map_err(internal_error)?;
 
     // 同步到调度器，确保禁用状态会移除旧 job
     if let Err(e) = scheduler.sync_schedule(&schedule).await {
         tracing_error!("Failed to sync updated schedule in scheduler: {}", e);
     }
 
-    record_audit(db, config, Some(&claims), "schedule.update", "schedule", Some(&id), None).await;
+    record_audit(
+        db,
+        config,
+        Some(&claims),
+        "schedule.update",
+        "schedule",
+        Some(&id),
+        None,
+    )
+    .await;
 
     Ok(Json(schedule))
 }
@@ -407,7 +448,16 @@ pub async fn delete_schedule(
             if let Err(e) = scheduler.remove_schedule(&id).await {
                 tracing_error!("Failed to remove schedule from scheduler: {}", e);
             }
-            record_audit(db, config, Some(&claims), "schedule.delete", "schedule", Some(&id), None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "schedule.delete",
+                "schedule",
+                Some(&id),
+                None,
+            )
+            .await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => Err(internal_error(e)),
@@ -485,7 +535,16 @@ pub async fn cancel_task(
 
     match service.cancel(&id).await {
         Ok(_) => {
-            record_audit(db, config, Some(&claims), "task.cancel", "task", Some(&id), None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "task.cancel",
+                "task",
+                Some(&id),
+                None,
+            )
+            .await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => Err(internal_error(e)),
@@ -537,7 +596,16 @@ pub async fn delete_task(
 
     match service.delete_task(&id).await {
         Ok(_) => {
-            record_audit(db, config, Some(&claims), "task.delete", "task", Some(&id), None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "task.delete",
+                "task",
+                Some(&id),
+                None,
+            )
+            .await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => Err(internal_error(e)),
@@ -592,7 +660,16 @@ pub async fn reload_scheduler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     match scheduler.reload().await {
         Ok(_) => {
-            record_audit(db, config, Some(&claims), "scheduler.reload", "scheduler", None, None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "scheduler.reload",
+                "scheduler",
+                None,
+                None,
+            )
+            .await;
             Ok(Json(serde_json::json!({
                 "status": "ok",
                 "message": "调度器已重新加载"
@@ -628,7 +705,16 @@ pub async fn update_config(
 
     match service.update_config(req).await {
         Ok(config_response) => {
-            record_audit(db, config, Some(&claims), "config.update", "config", None, None).await;
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "config.update",
+                "config",
+                None,
+                None,
+            )
+            .await;
             Ok(Json(config_response))
         }
         Err(e) => Err(internal_error(e)),
@@ -639,14 +725,22 @@ pub async fn get_system_health(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<SystemHealth>, (StatusCode, Json<ErrorResponse>)> {
     let service = AuditService::new(ServiceContext::new(db, config));
-    service.system_health().await.map(Json).map_err(internal_error)
+    service
+        .system_health()
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 pub async fn list_audit_logs(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<Vec<AuditLog>>, (StatusCode, Json<ErrorResponse>)> {
     let service = AuditService::new(ServiceContext::new(db, config));
-    service.list_recent(200).await.map(Json).map_err(internal_error)
+    service
+        .list_recent(200)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 pub async fn run_cleanup(
@@ -693,7 +787,11 @@ pub async fn list_epg_sources(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<Vec<EpgSource>>, (StatusCode, Json<ErrorResponse>)> {
     let service = EpgService::new(ServiceContext::new(db, config));
-    service.list_sources().await.map(Json).map_err(internal_error)
+    service
+        .list_sources()
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 pub async fn import_epg_source(
@@ -827,8 +925,9 @@ pub async fn channel_stream(
     proxy_stream_response(&channel.url).await
 }
 
-async fn proxy_stream_response(url: &str) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-
+async fn proxy_stream_response(
+    url: &str,
+) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -944,9 +1043,9 @@ async fn validate_proxy_url(url: &str) -> Result<(), (StatusCode, Json<ErrorResp
     }
 
     let port = parsed.port_or_known_default().unwrap_or(80);
-    let addresses = tokio::net::lookup_host((host, port)).await.map_err(|e| {
-        internal_error(anyhow::anyhow!("解析代理地址失败: {}", e))
-    })?;
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| internal_error(anyhow::anyhow!("解析代理地址失败: {}", e)))?;
 
     for address in addresses {
         if is_private_ip(address.ip()) {
@@ -1091,15 +1190,18 @@ pub async fn stop_transcode(
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let session = transcode_service.get_session(&session_id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "session_not_found".to_string(),
-                details: Some("转码会话不存在".to_string()),
-            }),
-        )
-    })?;
+    let session = transcode_service
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "session_not_found".to_string(),
+                    details: Some("转码会话不存在".to_string()),
+                }),
+            )
+        })?;
 
     if claims.sub != session.owner_user_id && !claims.can_manage_content() {
         return Err((
@@ -1123,7 +1225,10 @@ pub async fn stop_transcode(
         "playback.session_stop",
         "channel",
         Some(&session.channel_id),
-        Some(format!("session_id={}, owner={}", session.id, session.owner_username)),
+        Some(format!(
+            "session_id={}, owner={}",
+            session.id, session.owner_username
+        )),
     )
     .await;
 
@@ -1135,7 +1240,11 @@ pub async fn get_hls_file(
     State((_db, _scheduler, _process_manager, config)): State<AppState>,
     Path((session_id, filename)): Path<(String, String)>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    tracing::info!("get_hls_file called: session_id={}, filename={}", session_id, filename);
+    tracing::info!(
+        "get_hls_file called: session_id={}, filename={}",
+        session_id,
+        filename
+    );
 
     // 安全检查：防止路径遍历攻击
     if session_id.contains('.') || session_id.contains('/') || session_id.contains('\\') {
@@ -1161,7 +1270,7 @@ pub async fn get_hls_file(
     }
 
     // 构建 HLS 目录路径
-    let hls_dir = config.storage.temp_dir.join("hls");
+    let hls_dir = config.storage.preview_hls_dir();
     let file_path = hls_dir.join(&session_id).join(&filename);
 
     tracing::info!("Looking for HLS file at: {:?}", file_path);
@@ -1205,7 +1314,7 @@ pub async fn get_hls_file(
 
 // ===== 认证处理器 =====
 
-use crate::models::{LoginRequest, LoginResponse, ChangePasswordRequest, UserInfo};
+use crate::models::{ChangePasswordRequest, LoginRequest, LoginResponse, UserInfo};
 use axum::Json as AxumJson;
 
 /// 用户登录
@@ -1273,7 +1382,10 @@ pub async fn update_profile(
 ) -> Result<Json<UserInfo>, (StatusCode, Json<ErrorResponse>)> {
     let auth_service = AuthService::new(db);
 
-    match auth_service.update_profile(&claims.sub, req.nickname.as_deref()).await {
+    match auth_service
+        .update_profile(&claims.sub, req.nickname.as_deref())
+        .await
+    {
         Ok(user) => Ok(Json(user.into())),
         Err(e) => Err(internal_error(e)),
     }
