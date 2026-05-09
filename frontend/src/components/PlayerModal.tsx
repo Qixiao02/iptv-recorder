@@ -34,6 +34,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const hlsRef = useRef<Hls | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const hlsUrlRef = useRef<string | null>(null); // 保存转码后的 HLS URL
+  const recoveryAttemptRef = useRef({ media: 0, network: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [transcoding, setTranscoding] = useState(false);
@@ -58,6 +59,45 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    recoveryAttemptRef.current = { media: 0, network: 0 };
+  }, []);
+
+  const attachHlsErrorRecovery = useCallback((
+    hls: Hls,
+    sourceUrl: string,
+    onFatal: (message: string) => void,
+  ) => {
+    hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
+      if (!data.fatal) {
+        return;
+      }
+
+      console.error('HLS Error:', data);
+
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (recoveryAttemptRef.current.media < 2) {
+          recoveryAttemptRef.current.media += 1;
+          console.warn(`Recovering media error (${recoveryAttemptRef.current.media}/2)...`);
+          hls.recoverMediaError();
+          return;
+        }
+      }
+
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        if (recoveryAttemptRef.current.network < 2) {
+          recoveryAttemptRef.current.network += 1;
+          console.warn(`Recovering network error (${recoveryAttemptRef.current.network}/2)...`);
+          hls.stopLoad();
+          setTimeout(() => {
+            hls.loadSource(sourceUrl);
+            hls.startLoad();
+          }, 500);
+          return;
+        }
+      }
+
+      onFatal(`播放失败: ${data.type} - ${data.details}`);
+    });
   }, []);
 
   // 关闭时清理
@@ -77,6 +117,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     try {
       // 先停止之前的转码会话
       await cleanupTranscode();
+      recoveryAttemptRef.current = { media: 0, network: 0 };
 
       console.log('Starting transcode for channel:', channelId);
       const result = await startTranscode(channelId);
@@ -141,18 +182,16 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           console.log('HLS manifest parsed, starting playback');
+          recoveryAttemptRef.current = { media: 0, network: 0 };
+          setError(null);
           setTranscoding(false);
           setLoading(false);
           video.play().catch(() => {});
         });
-
-        hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
-          if (data.fatal) {
-            console.error('HLS Error:', data);
-            setError(`播放失败: ${data.type} - ${data.details}`);
-            setLoading(false);
-            setTranscoding(false);
-          }
+        attachHlsErrorRecovery(hls, hlsUrl, (message) => {
+          setError(message);
+          setLoading(false);
+          setTranscoding(false);
         });
 
         hlsRef.current = hls;
@@ -186,22 +225,21 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
+        maxBufferHole: 0.5,
       });
 
       hls.loadSource(proxyUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        recoveryAttemptRef.current = { media: 0, network: 0 };
+        setError(null);
         setLoading(false);
         video.play().catch(() => {});
       });
-
-      hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
-        if (data.fatal) {
-          console.error('HLS Error:', data);
-          setError(`播放失败: ${data.type} - ${data.details}`);
-          setLoading(false);
-        }
+      attachHlsErrorRecovery(hls, proxyUrl, (message) => {
+        setError(message);
+        setLoading(false);
       });
 
       hlsRef.current = hls;
@@ -243,6 +281,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setError(null);
       setLoading(true);
       setTranscoding(false);
+      recoveryAttemptRef.current = { media: 0, network: 0 };
 
       const isHLS = channelUrl.includes('.m3u8') || channelUrl.includes('m3u8');
       const isUDP = channelUrl.includes('/udp/');

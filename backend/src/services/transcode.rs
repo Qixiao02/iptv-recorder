@@ -121,29 +121,38 @@ impl TranscodeService {
 
         // 启动 FFmpeg 进程
         // 优化配置说明：
-        // - hls_time: 2秒分片，减少等待时间
-        // - hls_list_size: 保留 20 个分片（约 40 秒内容）
-        // - g: 关键帧间隔设为帧率的2倍，确保每个分片开始有关键帧
-        // - sc_threshold: 禁用场景切换检测，确保固定的关键帧间隔
-        // - hls_flags: append_list + independent_segments，允许播放器从任意分片开始
+        // - 输入端启用 genpts/坏包丢弃，减少 UDP/组播时间戳抖动带来的 MSE append 错误
+        // - 强制固定关键帧与 2 秒切片对齐，避免跨分片时 bufferAppendError
+        // - 使用 fMP4 分片，浏览器在长时间预览时通常比 MPEG-TS 更稳定
         let mut process = Command::new("ffmpeg")
             .args([
+                "-fflags", "+genpts+discardcorrupt",
+                "-err_detect", "ignore_err",
                 "-i", source_url,
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-sn",
+                "-dn",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-tune", "zerolatency",
-                "-g", "50",           // 关键帧间隔（25fps * 2秒）
-                "-sc_threshold", "0", // 禁用场景切换强制关键帧
+                "-g", "50",             // 关键帧间隔（25fps * 2秒）
+                "-keyint_min", "50",
+                "-sc_threshold", "0",   // 禁用场景切换强制关键帧
+                "-force_key_frames", "expr:gte(t,n_forced*2)",
+                "-pix_fmt", "yuv420p",
                 "-c:a", "aac",
                 "-b:a", "128k",
+                "-af", "aresample=async=1:first_pts=0",
                 "-f", "hls",
                 "-hls_time", "2",
                 "-hls_list_size", "20",
-                "-hls_flags", "append_list+independent_segments",
-                "-hls_segment_type", "mpegts",
+                "-hls_flags", "delete_segments+independent_segments+temp_file",
+                "-hls_segment_type", "fmp4",
+                "-hls_fmp4_init_filename", "init.mp4",
                 "-hls_segment_filename",
             ])
-            .arg(hls_dir.join("segment_%03d.ts").to_str().ok_or_else(|| anyhow::anyhow!("路径含非 UTF-8 字符"))?)
+            .arg(hls_dir.join("segment_%03d.m4s").to_str().ok_or_else(|| anyhow::anyhow!("路径含非 UTF-8 字符"))?)
             .arg(playlist_path.to_str().ok_or_else(|| anyhow::anyhow!("路径含非 UTF-8 字符"))?)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
