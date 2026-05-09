@@ -32,6 +32,7 @@ pub struct ActiveTranscode {
 
 #[derive(Debug, Clone, Copy)]
 enum TranscodeProfile {
+    FastRemux,
     StableFmp4,
     CompatibleMpegTs,
 }
@@ -39,6 +40,7 @@ enum TranscodeProfile {
 impl TranscodeProfile {
     fn name(self) -> &'static str {
         match self {
+            Self::FastRemux => "fast-remux",
             Self::StableFmp4 => "stable-fmp4",
             Self::CompatibleMpegTs => "compatible-mpegts",
         }
@@ -46,6 +48,8 @@ impl TranscodeProfile {
 
     fn startup_timeout(self) -> Duration {
         match self {
+            // 正常源应尽快起播，先走轻量 remux。
+            Self::FastRemux => Duration::from_secs(8),
             // 对组播/网关源多给一些时间等待第一个可解码关键帧。
             Self::StableFmp4 => Duration::from_secs(30),
             Self::CompatibleMpegTs => Duration::from_secs(40),
@@ -54,6 +58,7 @@ impl TranscodeProfile {
 
     fn segment_pattern(self) -> &'static str {
         match self {
+            Self::FastRemux => "segment_%03d.ts",
             Self::StableFmp4 => "segment_%03d.m4s",
             Self::CompatibleMpegTs => "segment_%03d.ts",
         }
@@ -61,6 +66,7 @@ impl TranscodeProfile {
 
     fn segment_extension(self) -> &'static str {
         match self {
+            Self::FastRemux => ".ts",
             Self::StableFmp4 => ".m4s",
             Self::CompatibleMpegTs => ".ts",
         }
@@ -166,6 +172,7 @@ impl TranscodeService {
         let mut selected_process = None;
         let mut startup_failure = None;
         let profiles = [
+            TranscodeProfile::FastRemux,
             TranscodeProfile::StableFmp4,
             TranscodeProfile::CompatibleMpegTs,
         ];
@@ -431,18 +438,38 @@ fn spawn_ffmpeg(
         "+genpts+discardcorrupt+igndts",
         "-err_detect",
         "ignore_err",
-        "-thread_queue_size",
-        "1024",
-        "-analyzeduration",
-        "50M",
-        "-probesize",
-        "50M",
         "-reconnect",
         "1",
         "-reconnect_streamed",
         "1",
         "-reconnect_delay_max",
         "2",
+    ]);
+
+    match profile {
+        TranscodeProfile::FastRemux => {
+            command.args([
+                "-thread_queue_size",
+                "512",
+                "-analyzeduration",
+                "4M",
+                "-probesize",
+                "4M",
+            ]);
+        }
+        TranscodeProfile::StableFmp4 | TranscodeProfile::CompatibleMpegTs => {
+            command.args([
+                "-thread_queue_size",
+                "1024",
+                "-analyzeduration",
+                "50M",
+                "-probesize",
+                "50M",
+            ]);
+        }
+    }
+
+    command.args([
         "-i",
         source_url,
         "-map",
@@ -456,6 +483,31 @@ fn spawn_ffmpeg(
     ]);
 
     match profile {
+        TranscodeProfile::FastRemux => {
+            command.args([
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+                "-muxpreload",
+                "0",
+                "-muxdelay",
+                "0",
+                "-f",
+                "hls",
+                "-hls_time",
+                "2",
+                "-hls_list_size",
+                "8",
+                "-hls_flags",
+                "delete_segments+append_list+temp_file",
+                "-hls_segment_type",
+                "mpegts",
+                "-hls_segment_filename",
+                segment_pattern,
+                playlist_path,
+            ]);
+        }
         TranscodeProfile::StableFmp4 => {
             command.args([
                 "-vf",
