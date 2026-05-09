@@ -472,10 +472,6 @@ fn spawn_ffmpeg(
     command.args([
         "-i",
         source_url,
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0?",
         "-sn",
         "-dn",
         "-max_muxing_queue_size",
@@ -510,6 +506,10 @@ fn spawn_ffmpeg(
         }
         TranscodeProfile::StableFmp4 => {
             command.args([
+                "-map",
+                "0:v:0?",
+                "-map",
+                "0:a:0?",
                 "-vf",
                 "yadif=0:-1:0",
                 "-r",
@@ -565,6 +565,10 @@ fn spawn_ffmpeg(
         }
         TranscodeProfile::CompatibleMpegTs => {
             command.args([
+                "-map",
+                "0:v:0?",
+                "-map",
+                "0:a:0?",
                 "-vf",
                 "yadif=0:-1:0",
                 "-r",

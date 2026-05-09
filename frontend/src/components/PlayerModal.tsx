@@ -64,6 +64,12 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    hlsUrlRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
     recoveryAttemptRef.current = { media: 0, network: 0 };
     playbackStartedRef.current = false;
   }, []);
@@ -136,6 +142,49 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       cleanupTranscode();
     };
   }, [cleanupHls, cleanupTranscode]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !isOpen) {
+      return;
+    }
+
+    const handleCanPlay = () => {
+      setLoading(false);
+      setTranscoding(false);
+    };
+
+    const handlePlaying = () => {
+      playbackStartedRef.current = true;
+      setLoading(false);
+      setTranscoding(false);
+      setError(null);
+    };
+
+    const handleWaiting = () => {
+      if (playbackStartedRef.current) {
+        setLoading(true);
+      }
+    };
+
+    const handleEnded = () => {
+      setLoading(false);
+    };
+
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('playing', handlePlaying);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('stalled', handleWaiting);
+    video.addEventListener('ended', handleEnded);
+
+    return () => {
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('playing', handlePlaying);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('stalled', handleWaiting);
+      video.removeEventListener('ended', handleEnded);
+    };
+  }, [isOpen]);
 
   // 播放 UDP 流（需要转码）
   const playUDPStream = useCallback(async () => {
@@ -228,7 +277,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           if (!isCurrentAttempt()) {
             return;
           }
-          await tryStartPlayback(video, 8);
+          await tryStartPlayback(video, 1.5);
         });
         attachHlsErrorRecovery(hls, hlsUrl, (message) => {
           if (!isCurrentAttempt()) {
@@ -291,7 +340,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         if (!isCurrentAttempt()) {
           return;
         }
-        await tryStartPlayback(video, 6);
+        await tryStartPlayback(video, 1);
       });
       attachHlsErrorRecovery(hls, proxyUrl, (message) => {
         if (!isCurrentAttempt()) {
