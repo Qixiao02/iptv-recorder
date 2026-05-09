@@ -47,8 +47,8 @@ impl TranscodeProfile {
     fn startup_timeout(self) -> Duration {
         match self {
             // 对组播/网关源多给一些时间等待第一个可解码关键帧。
-            Self::StableFmp4 => Duration::from_secs(18),
-            Self::CompatibleMpegTs => Duration::from_secs(24),
+            Self::StableFmp4 => Duration::from_secs(30),
+            Self::CompatibleMpegTs => Duration::from_secs(40),
         }
     }
 
@@ -56,6 +56,13 @@ impl TranscodeProfile {
         match self {
             Self::StableFmp4 => "segment_%03d.m4s",
             Self::CompatibleMpegTs => "segment_%03d.ts",
+        }
+    }
+
+    fn segment_extension(self) -> &'static str {
+        match self {
+            Self::StableFmp4 => ".m4s",
+            Self::CompatibleMpegTs => ".ts",
         }
     }
 }
@@ -179,6 +186,7 @@ impl TranscodeService {
             match wait_for_playlist_ready(
                 &mut process,
                 &playlist_path,
+                &hls_dir,
                 profile,
                 stderr_tail.clone(),
             )
@@ -416,15 +424,19 @@ fn spawn_ffmpeg(
     command.args([
         "-hide_banner",
         "-loglevel",
-        "warning",
+        "info",
+        "-stats_period",
+        "2",
         "-fflags",
         "+genpts+discardcorrupt+igndts",
         "-err_detect",
         "ignore_err",
+        "-thread_queue_size",
+        "1024",
         "-analyzeduration",
-        "15M",
+        "50M",
         "-probesize",
-        "15M",
+        "50M",
         "-reconnect",
         "1",
         "-reconnect_streamed",
@@ -434,7 +446,7 @@ fn spawn_ffmpeg(
         "-i",
         source_url,
         "-map",
-        "0:v:0",
+        "0:v:0?",
         "-map",
         "0:a:0?",
         "-sn",
@@ -594,6 +606,7 @@ fn wire_ffmpeg_logs(
 async fn wait_for_playlist_ready(
     process: &mut Child,
     playlist_path: &PathBuf,
+    hls_dir: &PathBuf,
     profile: TranscodeProfile,
     stderr_tail: Arc<std::sync::Mutex<VecDeque<String>>>,
 ) -> Result<()> {
@@ -612,21 +625,25 @@ async fn wait_for_playlist_ready(
 
         if let Some(status) = process.try_wait()? {
             let tail = format_log_tail(&stderr_tail);
+            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile);
             return Err(anyhow::anyhow!(
-                "FFmpeg 进程提前退出（profile={}, status={}）。{}",
+                "FFmpeg 进程提前退出（profile={}, status={}）。{}{}",
                 profile.name(),
                 status,
-                tail
+                tail,
+                diagnostics
             ));
         }
 
         if Instant::now() >= deadline {
             let tail = format_log_tail(&stderr_tail);
+            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile);
             return Err(anyhow::anyhow!(
-                "等待 HLS 播放列表超时（profile={}, timeout={}s）。{}",
+                "等待 HLS 播放列表超时（profile={}, timeout={}s）。{}{}",
                 profile.name(),
                 profile.startup_timeout().as_secs(),
-                tail
+                tail,
+                diagnostics
             ));
         }
 
@@ -669,6 +686,52 @@ fn format_log_tail(stderr_tail: &Arc<std::sync::Mutex<VecDeque<String>>>) -> Str
             .collect::<Vec<_>>()
             .join(" | ")
     )
+}
+
+fn collect_hls_diagnostics(
+    hls_dir: &PathBuf,
+    playlist_path: &PathBuf,
+    profile: TranscodeProfile,
+) -> String {
+    let mut parts = Vec::new();
+
+    let playlist_exists = playlist_path.exists();
+    parts.push(format!(" playlist_exists={playlist_exists}"));
+
+    if let Ok(content) = std::fs::read_to_string(playlist_path) {
+        let preview = content.lines().take(8).collect::<Vec<_>>().join(" || ");
+        if !preview.is_empty() {
+            parts.push(format!(" playlist_preview={preview:?}"));
+        }
+    }
+
+    let init_exists = hls_dir.join("init.mp4").exists();
+    if matches!(profile, TranscodeProfile::StableFmp4) {
+        parts.push(format!(" init_exists={init_exists}"));
+    }
+
+    let segment_count = std::fs::read_dir(hls_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(profile.segment_extension())
+        })
+        .count();
+    parts.push(format!(" segment_count={segment_count}"));
+
+    if playlist_exists && segment_count == 0 {
+        parts.push(
+            " hint=\"已生成播放列表但还没有媒体分片，通常是慢首帧或迟迟未等到关键帧\"".to_string(),
+        );
+    } else if !playlist_exists {
+        parts.push(" hint=\"连播放列表都未生成，通常仍卡在输入探测或视频轨识别阶段\"".to_string());
+    }
+
+    parts.concat()
 }
 
 async fn terminate_process(process: &mut Child) {
