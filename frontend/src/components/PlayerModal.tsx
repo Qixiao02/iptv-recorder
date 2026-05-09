@@ -154,12 +154,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       hlsUrlRef.current = hlsUrl; // 保存 HLS URL 供外部播放器使用
       console.log('Transcode started, playlist URL:', hlsUrl);
 
-      // 等待 HLS 播放列表生成（FFmpeg 初始化需要时间）
-      // 这里比低延迟模式多等几秒，换更厚的首屏缓冲。
+      // 后端会等到首个可播放片段基本就绪，这里只做一个很短的二次确认。
       let verified = false;
-      for (let i = 0; i < 20; i++) {
-        await wait(1000);
-        console.log(`Verifying HLS file... (attempt ${i + 1}/20)`);
+      for (let i = 0; i < 6; i++) {
+        await wait(500);
+        console.log(`Verifying HLS file... (attempt ${i + 1}/6)`);
         try {
           const checkResp = await fetch(hlsUrl);
           if (checkResp.ok) {
@@ -173,7 +172,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       }
 
       if (!verified) {
-        throw new Error('HLS 文件生成超时，请稍后重试');
+        throw new Error('HLS 文件生成超时，请稍后重试；若源是内网组播/网关流，服务端可能仍在等待稳定关键帧');
       }
 
       if (!videoRef.current) return;
@@ -424,8 +423,18 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
                   onClick={() => {
                     setError(null);
                     setLoading(true);
-                    if (channelUrl.includes('/udp/')) {
+                    const isUDP = channelUrl.includes('/udp/');
+                    const mustUseHls =
+                      playback_strategy === 'hls_only'
+                      || source_visibility === 'private_server_only'
+                      || isUDP;
+
+                    if (mustUseHls) {
                       playUDPStream();
+                    } else if (channelUrl.includes('.m3u8') || channelUrl.includes('m3u8') || playback_strategy === 'proxy_only') {
+                      playHLSStream();
+                    } else {
+                      playOtherStream();
                     }
                   }}
                 >
