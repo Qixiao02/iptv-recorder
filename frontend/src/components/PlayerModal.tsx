@@ -24,6 +24,8 @@ const buildApiUrl = (path: string): string => {
   return new URL(normalizedPath, window.location.origin).toString();
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const PlayerModal: React.FC<PlayerModalProps> = ({
   isOpen,
   onClose,
@@ -38,6 +40,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [transcoding, setTranscoding] = useState(false);
+  const playbackStartedRef = useRef(false);
 
   // 停止转码
   const cleanupTranscode = useCallback(async () => {
@@ -60,6 +63,30 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       hlsRef.current = null;
     }
     recoveryAttemptRef.current = { media: 0, network: 0 };
+    playbackStartedRef.current = false;
+  }, []);
+
+  const tryStartPlayback = useCallback(async (
+    video: HTMLVideoElement,
+    minBufferedSeconds: number,
+  ) => {
+    if (playbackStartedRef.current) {
+      return;
+    }
+
+    const bufferedEnd = video.buffered.length > 0 ? video.buffered.end(video.buffered.length - 1) : 0;
+    const bufferedSeconds = Math.max(0, bufferedEnd - video.currentTime);
+    if (bufferedSeconds < minBufferedSeconds) {
+      return;
+    }
+
+    playbackStartedRef.current = true;
+    setLoading(false);
+    setTranscoding(false);
+    setError(null);
+    await video.play().catch(() => {
+      playbackStartedRef.current = false;
+    });
   }, []);
 
   const attachHlsErrorRecovery = useCallback((
@@ -128,11 +155,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       console.log('Transcode started, playlist URL:', hlsUrl);
 
       // 等待 HLS 播放列表生成（FFmpeg 初始化需要时间）
-      // 使用重试机制，最多等待 15 秒
+      // 这里比低延迟模式多等几秒，换更厚的首屏缓冲。
       let verified = false;
-      for (let i = 0; i < 15; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        console.log(`Verifying HLS file... (attempt ${i + 1}/15)`);
+      for (let i = 0; i < 20; i++) {
+        await wait(1000);
+        console.log(`Verifying HLS file... (attempt ${i + 1}/20)`);
         try {
           const checkResp = await fetch(hlsUrl);
           if (checkResp.ok) {
@@ -156,19 +183,20 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,
-          // 缓冲配置 - 增加缓冲以减少卡顿
-          maxBufferLength: 30,           // 最大缓冲 30 秒
-          maxMaxBufferLength: 60,        // 绝对最大缓冲 60 秒
-          maxBufferSize: 60 * 1000 * 1000, // 最大缓冲大小 60MB
-          maxBufferHole: 0.5,            // 允许的缓冲间隙
-          // 直播流优化配置
-          liveDurationInfinity: true,    // 直播流无限时长
-          liveBackBufferLength: 0,       // 不保留已播放的缓冲
-          // 分片加载优化
-          startLevel: -1,                // 自动选择质量级别
-          autoStartLoad: true,           // 自动开始加载
-          // 重试配置
+          lowLatencyMode: false,
+          // 缓冲配置 - 允许播放器先囤几片，减少“每切下一片就转圈”。
+          maxBufferLength: 45,
+          maxMaxBufferLength: 90,
+          maxBufferSize: 80 * 1000 * 1000,
+          maxBufferHole: 0.8,
+          liveDurationInfinity: true,
+          backBufferLength: 30,
+          liveBackBufferLength: 30,
+          startLevel: -1,
+          autoStartLoad: true,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 8,
+          startFragPrefetch: true,
           manifestLoadingTimeOut: 10000,
           manifestLoadingMaxRetry: 6,
           levelLoadingTimeOut: 10000,
@@ -183,10 +211,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           console.log('HLS manifest parsed, starting playback');
           recoveryAttemptRef.current = { media: 0, network: 0 };
-          setError(null);
-          setTranscoding(false);
-          setLoading(false);
-          video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.BUFFER_APPENDED, async () => {
+          await tryStartPlayback(video, 8);
         });
         attachHlsErrorRecovery(hls, hlsUrl, (message) => {
           setError(message);
@@ -197,10 +224,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         hlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = hlsUrl;
-        video.addEventListener('loadedmetadata', () => {
-          setTranscoding(false);
-          setLoading(false);
-          video.play().catch(() => {});
+        video.addEventListener('loadedmetadata', async () => {
+          await wait(1500);
+          await tryStartPlayback(video, 0);
         });
       }
     } catch (e) {
@@ -224,18 +250,22 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
-        maxBufferHole: 0.5,
+        lowLatencyMode: false,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        maxBufferHole: 0.8,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 8,
       });
 
       hls.loadSource(proxyUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        recoveryAttemptRef.current = { media: 0, network: 0 };
-        setError(null);
-        setLoading(false);
-        video.play().catch(() => {});
+          recoveryAttemptRef.current = { media: 0, network: 0 };
+      });
+      hls.on(Hls.Events.BUFFER_APPENDED, async () => {
+        await tryStartPlayback(video, 6);
       });
       attachHlsErrorRecovery(hls, proxyUrl, (message) => {
         setError(message);
@@ -245,12 +275,12 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       hlsRef.current = hls;
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = proxyUrl;
-      video.addEventListener('loadedmetadata', () => {
-        setLoading(false);
-        video.play().catch(() => {});
+      video.addEventListener('loadedmetadata', async () => {
+        await wait(1200);
+        await tryStartPlayback(video, 0);
       });
     }
-  }, [channelId]);
+  }, [channelId, attachHlsErrorRecovery, tryStartPlayback]);
 
   // 播放其他流
   const playOtherStream = useCallback(() => {
@@ -282,6 +312,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setLoading(true);
       setTranscoding(false);
       recoveryAttemptRef.current = { media: 0, network: 0 };
+      playbackStartedRef.current = false;
 
       const isHLS = channelUrl.includes('.m3u8') || channelUrl.includes('m3u8');
       const isUDP = channelUrl.includes('/udp/');

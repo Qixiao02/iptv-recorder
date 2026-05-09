@@ -122,12 +122,15 @@ impl TranscodeService {
         // 启动 FFmpeg 进程
         // 优化配置说明：
         // - 输入端启用 genpts/坏包丢弃，减少 UDP/组播时间戳抖动带来的 MSE append 错误
-        // - 强制固定关键帧与 2 秒切片对齐，避免跨分片时 bufferAppendError
+        // - 强制固定关键帧与 4 秒切片对齐，牺牲一点延迟换取更厚的稳定缓冲
         // - 使用 fMP4 分片，浏览器在长时间预览时通常比 MPEG-TS 更稳定
         let mut process = Command::new("ffmpeg")
             .args([
                 "-fflags", "+genpts+discardcorrupt",
                 "-err_detect", "ignore_err",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "2",
                 "-i", source_url,
                 "-map", "0:v:0",
                 "-map", "0:a:0?",
@@ -135,18 +138,18 @@ impl TranscodeService {
                 "-dn",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-g", "50",             // 关键帧间隔（25fps * 2秒）
-                "-keyint_min", "50",
+                "-tune", "fastdecode",
+                "-g", "100",            // 关键帧间隔（25fps * 4秒）
+                "-keyint_min", "100",
                 "-sc_threshold", "0",   // 禁用场景切换强制关键帧
-                "-force_key_frames", "expr:gte(t,n_forced*2)",
+                "-force_key_frames", "expr:gte(t,n_forced*4)",
                 "-pix_fmt", "yuv420p",
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-af", "aresample=async=1:first_pts=0",
                 "-f", "hls",
-                "-hls_time", "2",
-                "-hls_list_size", "20",
+                "-hls_time", "4",
+                "-hls_list_size", "12",
                 "-hls_flags", "delete_segments+independent_segments+temp_file",
                 "-hls_segment_type", "fmp4",
                 "-hls_fmp4_init_filename", "init.mp4",
