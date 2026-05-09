@@ -37,6 +37,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const sessionIdRef = useRef<string | null>(null);
   const hlsUrlRef = useRef<string | null>(null); // 保存转码后的 HLS URL
   const recoveryAttemptRef = useRef({ media: 0, network: 0 });
+  const playAttemptRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [transcoding, setTranscoding] = useState(false);
@@ -58,6 +59,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   // 清理 HLS
   const cleanupHls = useCallback(() => {
+    playAttemptRef.current += 1;
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
@@ -137,6 +139,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   // 播放 UDP 流（需要转码）
   const playUDPStream = useCallback(async () => {
+    const attemptId = ++playAttemptRef.current;
+    const isCurrentAttempt = () => playAttemptRef.current === attemptId;
+
     setTranscoding(true);
     setLoading(true);
     setError(null);
@@ -148,6 +153,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
       console.log('Starting transcode for channel:', channelId);
       const result = await startTranscode(channelId);
+      if (!isCurrentAttempt()) {
+        await stopTranscode(result.session_id).catch(() => {});
+        return;
+      }
       sessionIdRef.current = result.session_id;
 
       const hlsUrl = buildApiUrl(result.playlist_url);
@@ -173,6 +182,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
       if (!verified) {
         throw new Error('HLS 文件生成超时，请稍后重试；若源是内网组播/网关流，服务端可能仍在等待稳定关键帧');
+      }
+
+      if (!isCurrentAttempt()) {
+        return;
       }
 
       if (!videoRef.current) return;
@@ -212,9 +225,15 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           recoveryAttemptRef.current = { media: 0, network: 0 };
         });
         hls.on(Hls.Events.BUFFER_APPENDED, async () => {
+          if (!isCurrentAttempt()) {
+            return;
+          }
           await tryStartPlayback(video, 8);
         });
         attachHlsErrorRecovery(hls, hlsUrl, (message) => {
+          if (!isCurrentAttempt()) {
+            return;
+          }
           setError(message);
           setLoading(false);
           setTranscoding(false);
@@ -229,6 +248,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         });
       }
     } catch (e) {
+      if (!isCurrentAttempt()) {
+        return;
+      }
       console.error('Transcode error:', e);
       setError(e instanceof Error ? e.message : '转码启动失败，请确保服务器已安装 FFmpeg');
       setLoading(false);
@@ -238,6 +260,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   // 播放 HLS 流
   const playHLSStream = useCallback(() => {
+    const attemptId = ++playAttemptRef.current;
+    const isCurrentAttempt = () => playAttemptRef.current === attemptId;
     if (!videoRef.current) return;
 
     const video = videoRef.current;
@@ -264,9 +288,15 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           recoveryAttemptRef.current = { media: 0, network: 0 };
       });
       hls.on(Hls.Events.BUFFER_APPENDED, async () => {
+        if (!isCurrentAttempt()) {
+          return;
+        }
         await tryStartPlayback(video, 6);
       });
       attachHlsErrorRecovery(hls, proxyUrl, (message) => {
+        if (!isCurrentAttempt()) {
+          return;
+        }
         setError(message);
         setLoading(false);
       });
@@ -283,6 +313,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   // 播放其他流
   const playOtherStream = useCallback(() => {
+    ++playAttemptRef.current;
     if (!videoRef.current) return;
 
     const video = videoRef.current;
