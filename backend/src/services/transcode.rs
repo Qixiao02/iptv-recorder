@@ -446,14 +446,26 @@ fn spawn_ffmpeg(
     match profile {
         TranscodeProfile::StableFmp4 => {
             command.args([
+                "-vf",
+                "yadif=0:-1:0",
+                "-r",
+                "25",
                 "-c:v",
                 "libx264",
                 "-preset",
-                "ultrafast",
+                "superfast",
                 "-tune",
-                "fastdecode",
+                "zerolatency",
+                "-profile:v",
+                "main",
                 "-x264-params",
                 "repeat-headers=1:scenecut=0",
+                "-b:v",
+                "2500k",
+                "-maxrate",
+                "3000k",
+                "-bufsize",
+                "6000k",
                 "-g",
                 "100",
                 "-keyint_min",
@@ -467,7 +479,7 @@ fn spawn_ffmpeg(
                 "-c:a",
                 "aac",
                 "-b:a",
-                "128k",
+                "96k",
                 "-af",
                 "aresample=async=1:first_pts=0",
                 "-f",
@@ -489,14 +501,26 @@ fn spawn_ffmpeg(
         }
         TranscodeProfile::CompatibleMpegTs => {
             command.args([
+                "-vf",
+                "yadif=0:-1:0",
+                "-r",
+                "25",
                 "-c:v",
                 "libx264",
                 "-preset",
-                "ultrafast",
+                "superfast",
                 "-tune",
                 "zerolatency",
+                "-profile:v",
+                "main",
                 "-x264-params",
                 "repeat-headers=1:scenecut=0",
+                "-b:v",
+                "2500k",
+                "-maxrate",
+                "3000k",
+                "-bufsize",
+                "6000k",
                 "-g",
                 "125",
                 "-keyint_min",
@@ -510,7 +534,7 @@ fn spawn_ffmpeg(
                 "-c:a",
                 "aac",
                 "-b:a",
-                "128k",
+                "96k",
                 "-af",
                 "aresample=async=1:first_pts=0",
                 "-f",
@@ -669,8 +693,11 @@ mod tests {
     #[test]
     fn playlist_ready_requires_manifest_and_segment() {
         let path = temp_playlist_path("playlist-ready");
-        fs::write(&path, "#EXTM3U\n#EXT-X-VERSION:7\n#EXTINF:4.0,\nsegment_000.ts\n")
-            .expect("write playlist");
+        fs::write(
+            &path,
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXTINF:4.0,\nsegment_000.ts\n",
+        )
+        .expect("write playlist");
 
         assert!(playlist_is_ready(&path));
 
