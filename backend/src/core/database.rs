@@ -77,17 +77,21 @@ async fn ensure_legacy_compatibility(pool: &Db) -> Result<()> {
 
     let has_source_visibility = column_exists(pool, "channels", "source_visibility").await?;
     if !has_source_visibility {
-        sqlx::query("ALTER TABLE channels ADD COLUMN source_visibility TEXT NOT NULL DEFAULT 'public'")
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "ALTER TABLE channels ADD COLUMN source_visibility TEXT NOT NULL DEFAULT 'public'",
+        )
+        .execute(pool)
+        .await?;
         tracing::info!("Added missing source_visibility column to legacy channels table");
     }
 
     let has_playback_strategy = column_exists(pool, "channels", "playback_strategy").await?;
     if !has_playback_strategy {
-        sqlx::query("ALTER TABLE channels ADD COLUMN playback_strategy TEXT NOT NULL DEFAULT 'auto'")
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "ALTER TABLE channels ADD COLUMN playback_strategy TEXT NOT NULL DEFAULT 'auto'",
+        )
+        .execute(pool)
+        .await?;
         tracing::info!("Added missing playback_strategy column to legacy channels table");
     }
 
@@ -96,9 +100,10 @@ async fn ensure_legacy_compatibility(pool: &Db) -> Result<()> {
 
 async fn column_exists(pool: &Db, table: &str, column: &str) -> Result<bool> {
     let pragma = format!("PRAGMA table_info({table})");
-    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> = sqlx::query_as(&pragma)
-        .fetch_all(pool)
-        .await?;
+    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        sqlx::query_as(&pragma).fetch_all(pool).await?;
 
-    Ok(columns.into_iter().any(|(_, name, _, _, _, _)| name == column))
+    Ok(columns
+        .into_iter()
+        .any(|(_, name, _, _, _, _)| name == column))
 }

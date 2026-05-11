@@ -109,11 +109,10 @@ impl EpgService {
     }
 
     pub async fn list_sources(&self) -> Result<Vec<EpgSource>> {
-        let sources = sqlx::query_as::<_, EpgSource>(
-            "SELECT * FROM epg_sources ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let sources =
+            sqlx::query_as::<_, EpgSource>("SELECT * FROM epg_sources ORDER BY created_at DESC")
+                .fetch_all(&self.ctx.db)
+                .await?;
         Ok(sources)
     }
 
@@ -147,7 +146,8 @@ fn normalize_xmltv_datetime(value: &str) -> String {
         return dt.with_timezone(&chrono::Utc).to_rfc3339();
     }
     if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%d%H%M%S") {
-        return chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).to_rfc3339();
+        return chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+            .to_rfc3339();
     }
     value.to_string()
 }
@@ -156,7 +156,10 @@ fn normalize_xmltv_datetime(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::{config::Config, core::database};
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()

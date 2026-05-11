@@ -4,9 +4,9 @@
 
 #![allow(dead_code)]
 
-use tokio::sync::broadcast;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use tokio::sync::broadcast;
 
 /// 事件类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

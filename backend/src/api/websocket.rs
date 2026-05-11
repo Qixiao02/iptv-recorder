@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::core::event::{Event, EventBus};
-use crate::models::{WsMessage, TaskUpdateData, TaskProgressData, ChannelStatusData, SystemAlertData};
+use crate::models::{
+    ChannelStatusData, SystemAlertData, TaskProgressData, TaskUpdateData, WsMessage,
+};
 
 /// 将内部事件转换为 WebSocket 消息
 fn event_to_ws_message(event: Event) -> WsMessage {
@@ -38,11 +40,7 @@ fn event_to_ws_message(event: Event) -> WsMessage {
 }
 
 /// 处理 WebSocket 连接
-pub async fn handle_socket(
-    socket: WebSocket,
-    _db: Pool<Sqlite>,
-    event_bus: Arc<EventBus>,
-) {
+pub async fn handle_socket(socket: WebSocket, _db: Pool<Sqlite>, event_bus: Arc<EventBus>) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // 发送欢迎消息

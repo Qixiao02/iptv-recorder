@@ -7,7 +7,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 
-use crate::models::{User, UserRole, LoginRequest, LoginResponse, ChangePasswordRequest};
+use crate::models::{ChangePasswordRequest, LoginRequest, LoginResponse, User, UserRole};
 
 /// JWT 配置
 const JWT_EXPIRATION_HOURS: i64 = 24;
@@ -30,11 +30,11 @@ fn jwt_secret() -> Result<Vec<u8>> {
 /// JWT Claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,      // user id
+    pub sub: String, // user id
     pub username: String,
     pub role: String,
-    pub exp: usize,       // expiration time
-    pub iat: usize,       // issued at
+    pub exp: usize, // expiration time
+    pub iat: usize, // issued at
 }
 
 impl Claims {
@@ -69,11 +69,10 @@ impl AuthService {
     /// 初始化默认管理员账号
     pub async fn init_default_admin(&self) -> Result<()> {
         // 检查是否已存在 admin 用户
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')"
-        )
-        .fetch_one(&self.db)
-        .await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')")
+                .fetch_one(&self.db)
+                .await?;
 
         if !exists {
             let generated_password = format!("admin-{}", uuid::Uuid::new_v4().simple());
@@ -112,17 +111,15 @@ impl AuthService {
     /// 用户登录
     pub async fn login(&self, req: LoginRequest) -> Result<LoginResponse> {
         // 查找用户
-        let user = sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE username = ?"
-        )
-        .bind(&req.username)
-        .fetch_optional(&self.db)
-        .await?
-        .ok_or_else(|| anyhow!("用户名或密码错误"))?;
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
+            .bind(&req.username)
+            .fetch_optional(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("用户名或密码错误"))?;
 
         // 验证密码
-        let valid = verify(&req.password, &user.password_hash)
-            .map_err(|_| anyhow!("密码验证失败"))?;
+        let valid =
+            verify(&req.password, &user.password_hash).map_err(|_| anyhow!("密码验证失败"))?;
 
         if !valid {
             return Err(anyhow!("用户名或密码错误"));
@@ -172,13 +169,11 @@ impl AuthService {
 
     /// 获取当前用户
     pub async fn get_current_user(&self, user_id: &str) -> Result<User> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT * FROM users WHERE id = ?"
-        )
-        .bind(user_id)
-        .fetch_optional(&self.db)
-        .await?
-        .ok_or_else(|| anyhow!("用户不存在"))?;
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("用户不存在"))?;
 
         Ok(user)
     }
@@ -189,8 +184,8 @@ impl AuthService {
         let user = self.get_current_user(user_id).await?;
 
         // 验证旧密码
-        let valid = verify(&req.old_password, &user.password_hash)
-            .map_err(|_| anyhow!("密码验证失败"))?;
+        let valid =
+            verify(&req.old_password, &user.password_hash).map_err(|_| anyhow!("密码验证失败"))?;
 
         if !valid {
             return Err(anyhow!("原密码错误"));
@@ -201,14 +196,12 @@ impl AuthService {
         let now = Utc::now().to_rfc3339();
 
         // 更新密码
-        sqlx::query(
-            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(&new_hash)
-        .bind(&now)
-        .bind(user_id)
-        .execute(&self.db)
-        .await?;
+        sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+            .bind(&new_hash)
+            .bind(&now)
+            .bind(user_id)
+            .execute(&self.db)
+            .await?;
 
         tracing::info!("User {} changed password", user.username);
 
@@ -220,14 +213,12 @@ impl AuthService {
         let now = Utc::now().to_rfc3339();
 
         if let Some(name) = nickname {
-            sqlx::query(
-                "UPDATE users SET nickname = ?, updated_at = ? WHERE id = ?"
-            )
-            .bind(name)
-            .bind(&now)
-            .bind(user_id)
-            .execute(&self.db)
-            .await?;
+            sqlx::query("UPDATE users SET nickname = ?, updated_at = ? WHERE id = ?")
+                .bind(name)
+                .bind(&now)
+                .bind(user_id)
+                .execute(&self.db)
+                .await?;
         }
 
         self.get_current_user(user_id).await
@@ -238,7 +229,11 @@ impl AuthService {
 mod tests {
     use super::*;
     use crate::{config::Config, core::database};
-    use std::{path::PathBuf, sync::{Mutex, OnceLock}, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -286,10 +281,12 @@ mod tests {
         let service = AuthService::new(db);
 
         service.init_default_admin().await.expect("init admin");
-        let login = service.login(LoginRequest {
-            username: "admin".to_string(),
-            password: "super-secure-admin".to_string(),
-        }).await;
+        let login = service
+            .login(LoginRequest {
+                username: "admin".to_string(),
+                password: "super-secure-admin".to_string(),
+            })
+            .await;
 
         assert!(login.is_ok());
 

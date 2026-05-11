@@ -68,18 +68,25 @@ impl AuditService {
         let users_total = count(&self.ctx, "SELECT COUNT(*) as total FROM users").await?;
         let channels_total = count(&self.ctx, "SELECT COUNT(*) as total FROM channels").await?;
         let schedules_total = count(&self.ctx, "SELECT COUNT(*) as total FROM schedules").await?;
-        let enabled_schedules = count(&self.ctx, "SELECT COUNT(*) as total FROM schedules WHERE enabled = 1").await?;
-        let running_tasks = count(&self.ctx, "SELECT COUNT(*) as total FROM tasks WHERE status = 'running'").await?;
+        let enabled_schedules = count(
+            &self.ctx,
+            "SELECT COUNT(*) as total FROM schedules WHERE enabled = 1",
+        )
+        .await?;
+        let running_tasks = count(
+            &self.ctx,
+            "SELECT COUNT(*) as total FROM tasks WHERE status = 'running'",
+        )
+        .await?;
         let failed_tasks_24h = count(
             &self.ctx,
             "SELECT COUNT(*) as total FROM tasks WHERE status = 'failed' AND updated_at >= datetime('now', '-1 day')",
         )
         .await?;
-        let last_audit_at: Option<(String,)> = sqlx::query_as(
-            "SELECT created_at FROM audit_logs ORDER BY created_at DESC LIMIT 1",
-        )
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let last_audit_at: Option<(String,)> =
+            sqlx::query_as("SELECT created_at FROM audit_logs ORDER BY created_at DESC LIMIT 1")
+                .fetch_optional(&self.ctx.db)
+                .await?;
 
         Ok(SystemHealth {
             users_total,

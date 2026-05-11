@@ -1,10 +1,12 @@
 //! 录制服务
 
 use crate::{
+    core::event::{
+        Event, EventSender, TaskProgressEvent, TaskStatus as EventTaskStatus, TaskUpdateEvent,
+    },
     core::process::{ProcessManager, RecordingConfig},
-    core::event::{EventSender, Event, TaskProgressEvent, TaskUpdateEvent, TaskStatus as EventTaskStatus},
-    models::{ManualRecordRequest, Task, Channel},
-    services::{ServiceContext, PostProcessor},
+    models::{Channel, ManualRecordRequest, Task},
+    services::{PostProcessor, ServiceContext},
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -28,7 +30,11 @@ struct RuntimeRecordingSettings {
 }
 
 impl RecordingService {
-    pub fn new(process_manager: Arc<ProcessManager>, ctx: ServiceContext, event_sender: Option<EventSender>) -> Self {
+    pub fn new(
+        process_manager: Arc<ProcessManager>,
+        ctx: ServiceContext,
+        event_sender: Option<EventSender>,
+    ) -> Self {
         Self {
             process_manager,
             ctx,
@@ -55,14 +61,16 @@ impl RecordingService {
         let channel = self.get_channel(&req.channel_id).await?;
 
         // 构建输出文件路径（支持自定义目录和模板）
-        let output_path = self.build_output_path(
-            &channel,
-            &task_id,
-            &req.output_name,
-            &req.output_dir,
-            req.output_template.as_deref(),
-            &runtime_settings.recordings_dir,
-        ).await?;
+        let output_path = self
+            .build_output_path(
+                &channel,
+                &task_id,
+                &req.output_name,
+                &req.output_dir,
+                req.output_template.as_deref(),
+                &runtime_settings.recordings_dir,
+            )
+            .await?;
 
         // 创建任务记录
         sqlx::query(
@@ -96,7 +104,9 @@ impl RecordingService {
             output_path: output_path.clone(),
             duration_seconds: Some(duration_seconds as u64),
             headers: vec![],
-            user_agent: Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string()),
+            user_agent: Some(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string(),
+            ),
             proxy: None,
             threads: Some(thread_count as usize),
             video_quality: req.video_quality.clone(),
@@ -250,7 +260,11 @@ impl RecordingService {
                             info!("目录中的文件:");
                             while let Ok(Some(entry)) = entries.next_entry().await {
                                 if let Ok(meta) = entry.metadata().await {
-                                    info!("  - {} ({} bytes)", entry.file_name().to_string_lossy(), meta.len());
+                                    info!(
+                                        "  - {} ({} bytes)",
+                                        entry.file_name().to_string_lossy(),
+                                        meta.len()
+                                    );
                                 }
                             }
                         }
@@ -260,13 +274,17 @@ impl RecordingService {
                     }
 
                     // 查找实际的输出文件（N_m3u8DL-RE 可能输出不同扩展名和文件名）
-                    let actual_output_path = match find_actual_output_file(&output_path_clone).await {
+                    let actual_output_path = match find_actual_output_file(&output_path_clone).await
+                    {
                         Some(path) => {
                             info!("✅ 找到实际输出文件: {}", path.display());
                             path
                         }
                         None => {
-                            warn!("❌ 未找到输出文件，使用预期路径: {}", output_path_clone.display());
+                            warn!(
+                                "❌ 未找到输出文件，使用预期路径: {}",
+                                output_path_clone.display()
+                            );
                             output_path_clone.clone()
                         }
                     };
@@ -274,27 +292,40 @@ impl RecordingService {
                     // 检查文件名是否符合预期，如果不符合则重命名
                     let final_output_path = if actual_output_path != output_path_clone {
                         // 获取实际文件的扩展名
-                        let actual_ext = actual_output_path.extension()
+                        let actual_ext = actual_output_path
+                            .extension()
                             .and_then(|e| e.to_str())
                             .unwrap_or("ts");
 
                         // 构建预期的最终路径（使用实际扩展名）
-                        let expected_stem = output_path_clone.file_stem()
+                        let expected_stem = output_path_clone
+                            .file_stem()
                             .and_then(|s| s.to_str())
                             .unwrap_or("");
-                        let expected_dir = output_path_clone.parent().unwrap_or_else(|| std::path::Path::new("."));
+                        let expected_dir = output_path_clone
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
 
                         if !expected_stem.is_empty() {
-                            let new_path = expected_dir.join(format!("{}.{}", expected_stem, actual_ext));
+                            let new_path =
+                                expected_dir.join(format!("{}.{}", expected_stem, actual_ext));
 
                             // 重命名文件
                             match tokio::fs::rename(&actual_output_path, &new_path).await {
                                 Ok(_) => {
-                                    info!("文件已重命名: {} -> {}", actual_output_path.display(), new_path.display());
+                                    info!(
+                                        "文件已重命名: {} -> {}",
+                                        actual_output_path.display(),
+                                        new_path.display()
+                                    );
                                     new_path
                                 }
                                 Err(e) => {
-                                    warn!("重命名文件失败: {}, 使用原始路径: {}", e, actual_output_path.display());
+                                    warn!(
+                                        "重命名文件失败: {}, 使用原始路径: {}",
+                                        e,
+                                        actual_output_path.display()
+                                    );
                                     actual_output_path
                                 }
                             }
@@ -307,7 +338,10 @@ impl RecordingService {
 
                     // 后处理（转码）
                     let final_path = if post_processor.is_enabled() {
-                        match post_processor.process(&final_output_path, &task_id_clone).await {
+                        match post_processor
+                            .process(&final_output_path, &task_id_clone)
+                            .await
+                        {
                             Ok(path) => path,
                             Err(e) => {
                                 error!("后处理失败: {}", e);
@@ -349,12 +383,17 @@ impl RecordingService {
                     .await;
 
                     if !matches!(result, Ok(done) if done.rows_affected() > 0) {
-                        info!("跳过完成态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        info!(
+                            "跳过完成态写回，任务已提前进入其他终态: task_id={}",
+                            task_id_clone
+                        );
                         return;
                     }
 
-                    info!("✅ 录制任务完成: task_id={}, output={}, duration={}s, size={}",
-                        task_id_clone, final_path_str, final_elapsed, file_size);
+                    info!(
+                        "✅ 录制任务完成: task_id={}, output={}, duration={}s, size={}",
+                        task_id_clone, final_path_str, final_elapsed, file_size
+                    );
 
                     if let Some(ref sender) = event_sender_clone {
                         let _ = sender.send(Event::TaskUpdate(TaskUpdateEvent {
@@ -369,12 +408,10 @@ impl RecordingService {
 
                     // 查找实际的输出文件并获取文件大小
                     let file_size = match find_actual_output_file(&output_path_clone).await {
-                        Some(actual_path) => {
-                            tokio::fs::metadata(&actual_path)
-                                .await
-                                .map(|m| m.len() as i64)
-                                .unwrap_or(0)
-                        }
+                        Some(actual_path) => tokio::fs::metadata(&actual_path)
+                            .await
+                            .map(|m| m.len() as i64)
+                            .unwrap_or(0),
                         None => 0,
                     };
 
@@ -397,11 +434,17 @@ impl RecordingService {
                     .await;
 
                     if !matches!(result, Ok(done) if done.rows_affected() > 0) {
-                        info!("跳过失败态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        info!(
+                            "跳过失败态写回，任务已提前进入其他终态: task_id={}",
+                            task_id_clone
+                        );
                         return;
                     }
 
-                    error!("❌ 录制任务失败: task_id={}, error={}", task_id_clone, error);
+                    error!(
+                        "❌ 录制任务失败: task_id={}, error={}",
+                        task_id_clone, error
+                    );
 
                     if let Some(ref sender) = event_sender_clone {
                         let _ = sender.send(Event::TaskUpdate(TaskUpdateEvent {
@@ -416,12 +459,10 @@ impl RecordingService {
 
                     // 查找实际的输出文件并获取文件大小
                     let file_size = match find_actual_output_file(&output_path_clone).await {
-                        Some(actual_path) => {
-                            tokio::fs::metadata(&actual_path)
-                                .await
-                                .map(|m| m.len() as i64)
-                                .unwrap_or(0)
-                        }
+                        Some(actual_path) => tokio::fs::metadata(&actual_path)
+                            .await
+                            .map(|m| m.len() as i64)
+                            .unwrap_or(0),
                         None => 0,
                     };
 
@@ -442,11 +483,17 @@ impl RecordingService {
                     .await;
 
                     if !matches!(result, Ok(done) if done.rows_affected() > 0) {
-                        info!("跳过取消态写回，任务已提前进入其他终态: task_id={}", task_id_clone);
+                        info!(
+                            "跳过取消态写回，任务已提前进入其他终态: task_id={}",
+                            task_id_clone
+                        );
                         return;
                     }
 
-                    info!("🚫 录制任务已取消: task_id={}, duration={}s", task_id_clone, final_elapsed);
+                    info!(
+                        "🚫 录制任务已取消: task_id={}, duration={}s",
+                        task_id_clone, final_elapsed
+                    );
 
                     if let Some(ref sender) = event_sender_clone {
                         let _ = sender.send(Event::TaskUpdate(TaskUpdateEvent {
@@ -458,7 +505,10 @@ impl RecordingService {
                 }
                 _ => {
                     // 其他状态不应该出现在这里
-                    warn!("⚠️ 录制任务异常结束: task_id={}, status={:?}", task_id_clone, status);
+                    warn!(
+                        "⚠️ 录制任务异常结束: task_id={}, status={:?}",
+                        task_id_clone, status
+                    );
                 }
             }
         });
@@ -468,23 +518,19 @@ impl RecordingService {
 
     /// 获取任务
     pub async fn get_task(&self, id: &str) -> Result<Task> {
-        let task = sqlx::query_as::<_, Task>(
-            "SELECT * FROM tasks WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_one(&self.ctx.db)
-        .await?;
+        let task = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.ctx.db)
+            .await?;
 
         Ok(task)
     }
 
     /// 获取所有任务
     pub async fn list_tasks(&self) -> Result<Vec<Task>> {
-        let tasks = sqlx::query_as::<_, Task>(
-            "SELECT * FROM tasks ORDER BY created_at DESC"
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let tasks = sqlx::query_as::<_, Task>("SELECT * FROM tasks ORDER BY created_at DESC")
+            .fetch_all(&self.ctx.db)
+            .await?;
 
         Ok(tasks)
     }
@@ -492,11 +538,9 @@ impl RecordingService {
     /// 获取运行中的任务
     #[allow(dead_code)]
     pub async fn list_running(&self) -> Result<Vec<Task>> {
-        let tasks = sqlx::query_as::<_, Task>(
-            "SELECT * FROM tasks WHERE status = 'running'"
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let tasks = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE status = 'running'")
+            .fetch_all(&self.ctx.db)
+            .await?;
 
         Ok(tasks)
     }
@@ -584,12 +628,10 @@ impl RecordingService {
 
     /// 获取频道信息
     async fn get_channel(&self, id: &str) -> Result<Channel> {
-        let channel = sqlx::query_as::<_, Channel>(
-            "SELECT * FROM channels WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_one(&self.ctx.db)
-        .await?;
+        let channel = sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.ctx.db)
+            .await?;
 
         Ok(channel)
     }
@@ -635,7 +677,8 @@ impl RecordingService {
 
                 // 去掉可能的后缀
                 let filename = filename.trim();
-                let filename = filename.strip_suffix(".mp4")
+                let filename = filename
+                    .strip_suffix(".mp4")
                     .or_else(|| filename.strip_suffix(".ts"))
                     .or_else(|| filename.strip_suffix(".mkv"))
                     .unwrap_or(filename);
@@ -648,7 +691,8 @@ impl RecordingService {
         } else if let Some(name) = custom_name {
             // 如果指定了 output_name，直接使用（去掉可能的后缀）
             let name = name.trim();
-            let name = name.strip_suffix(".mp4")
+            let name = name
+                .strip_suffix(".mp4")
                 .or_else(|| name.strip_suffix(".ts"))
                 .or_else(|| name.strip_suffix(".mkv"))
                 .unwrap_or(name);
@@ -674,7 +718,9 @@ impl RecordingService {
         let sanitized = input
             .chars()
             .map(|ch| {
-                if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                if ch.is_control()
+                    || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                {
                     '_'
                 } else if ch.is_whitespace() {
                     '_'
@@ -710,8 +756,13 @@ impl RecordingService {
         Ok(RuntimeRecordingSettings {
             recorder_executable: PathBuf::from(recorder_executable),
             recordings_dir: PathBuf::from(recordings_dir),
-            default_duration_seconds: self.get_system_value("recording.default_duration_minutes", 60u32).await? as i64 * 60,
-            default_thread_count: self.get_system_value("recording.thread_count", 4u32).await? as i32,
+            default_duration_seconds: self
+                .get_system_value("recording.default_duration_minutes", 60u32)
+                .await? as i64
+                * 60,
+            default_thread_count: self
+                .get_system_value("recording.thread_count", 4u32)
+                .await? as i32,
         })
     }
 
@@ -719,12 +770,11 @@ impl RecordingService {
     where
         T: std::str::FromStr,
     {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_config WHERE key = ?"
-        )
-        .bind(key)
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM system_config WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.ctx.db)
+                .await?;
 
         if let Some((value,)) = row {
             value.parse().or(Ok(default))
@@ -734,14 +784,15 @@ impl RecordingService {
     }
 
     async fn get_system_value_string(&self, key: &str, default: &str) -> Result<String> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_config WHERE key = ?"
-        )
-        .bind(key)
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM system_config WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.ctx.db)
+                .await?;
 
-        Ok(row.map(|(value,)| value).unwrap_or_else(|| default.to_string()))
+        Ok(row
+            .map(|(value,)| value)
+            .unwrap_or_else(|| default.to_string()))
     }
 
     fn build_post_processor(
@@ -778,7 +829,11 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     let parent = expected_path.parent()?;
     let stem = expected_path.file_stem()?.to_str()?;
 
-    debug!("查找输出文件: 目录={}, 文件名前缀={}", parent.display(), stem);
+    debug!(
+        "查找输出文件: 目录={}, 文件名前缀={}",
+        parent.display(),
+        stem
+    );
 
     // 读取目录中的文件
     let mut entries = match tokio::fs::read_dir(parent).await {
@@ -821,7 +876,8 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
             }
 
             // 检查是否是视频文件
-            let is_video = path.extension()
+            let is_video = path
+                .extension()
                 .and_then(|e| e.to_str())
                 .map(|ext| video_extensions.contains(&ext.to_lowercase().as_str()))
                 .unwrap_or(false);
@@ -846,13 +902,18 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     }
 
     // 优先返回匹配前缀的文件，按修改时间排序
-    let mut prefix_matches: Vec<_> = matching_files.iter()
+    let mut prefix_matches: Vec<_> = matching_files
+        .iter()
         .filter(|(_, _, _, matches)| *matches)
         .collect();
     prefix_matches.sort_by(|a, b| b.1.cmp(&a.1));
 
     if let Some((path, _, size, _)) = prefix_matches.first() {
-        info!("找到前缀匹配的输出文件: {} (大小: {} bytes)", path.display(), size);
+        info!(
+            "找到前缀匹配的输出文件: {} (大小: {} bytes)",
+            path.display(),
+            size
+        );
         return Some((*path).clone());
     }
 
@@ -860,8 +921,12 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     matching_files.sort_by(|a, b| b.1.cmp(&a.1));
 
     if let Some((path, _, size, _)) = matching_files.first() {
-        info!("未找到前缀匹配，使用最新的视频文件: {} (大小: {} bytes, 共 {} 个视频文件)",
-            path.display(), size, matching_files.len());
+        info!(
+            "未找到前缀匹配，使用最新的视频文件: {} (大小: {} bytes, 共 {} 个视频文件)",
+            path.display(),
+            size,
+            matching_files.len()
+        );
         return Some(path.clone());
     }
 
@@ -872,8 +937,15 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Config, core::{database, process::ProcessManager}};
-    use std::{path::PathBuf, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+    use crate::{
+        config::Config,
+        core::{database, process::ProcessManager},
+    };
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -890,44 +962,50 @@ mod tests {
             .await
             .expect("db init");
 
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'storage.recordings_path'")
+            .bind("./custom-recordings")
+            .execute(&db)
+            .await
+            .expect("update recordings path");
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'")
+            .bind("/usr/local/bin/custom-recorder")
+            .execute(&db)
+            .await
+            .expect("update recorder path");
         sqlx::query(
-            "UPDATE system_config SET value = ? WHERE key = 'storage.recordings_path'"
-        )
-        .bind("./custom-recordings")
-        .execute(&db)
-        .await
-        .expect("update recordings path");
-        sqlx::query(
-            "UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'"
-        )
-        .bind("/usr/local/bin/custom-recorder")
-        .execute(&db)
-        .await
-        .expect("update recorder path");
-        sqlx::query(
-            "UPDATE system_config SET value = ? WHERE key = 'recording.default_duration_minutes'"
+            "UPDATE system_config SET value = ? WHERE key = 'recording.default_duration_minutes'",
         )
         .bind("90")
         .execute(&db)
         .await
         .expect("update duration");
-        sqlx::query(
-            "UPDATE system_config SET value = ? WHERE key = 'recording.thread_count'"
-        )
-        .bind("8")
-        .execute(&db)
-        .await
-        .expect("update thread count");
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'recording.thread_count'")
+            .bind("8")
+            .execute(&db)
+            .await
+            .expect("update thread count");
 
         let service = RecordingService::new(
-            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+            Arc::new(ProcessManager::new(
+                PathBuf::from("recorder"),
+                PathBuf::from("tmp"),
+            )),
             ServiceContext::new(db, Config::default()),
             None,
         );
 
-        let settings = service.load_runtime_settings().await.expect("runtime settings");
-        assert_eq!(settings.recordings_dir, PathBuf::from("./custom-recordings"));
-        assert_eq!(settings.recorder_executable, PathBuf::from("/usr/local/bin/custom-recorder"));
+        let settings = service
+            .load_runtime_settings()
+            .await
+            .expect("runtime settings");
+        assert_eq!(
+            settings.recordings_dir,
+            PathBuf::from("./custom-recordings")
+        );
+        assert_eq!(
+            settings.recorder_executable,
+            PathBuf::from("/usr/local/bin/custom-recorder")
+        );
         assert_eq!(settings.default_duration_seconds, 5400);
         assert_eq!(settings.default_thread_count, 8);
 
@@ -955,7 +1033,10 @@ mod tests {
         .expect("insert channel");
 
         let service = RecordingService::new(
-            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+            Arc::new(ProcessManager::new(
+                PathBuf::from("recorder"),
+                PathBuf::from("tmp"),
+            )),
             ServiceContext::new(db, Config::default()),
             None,
         );

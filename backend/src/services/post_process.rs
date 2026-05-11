@@ -110,18 +110,11 @@ impl PostProcessor {
         output_path: &Path,
         duration_seconds: Option<u64>,
     ) -> Result<Vec<String>> {
-        let mut args = vec![
-            "-y".to_string(),
-            "-i".to_string(),
-            url.to_string(),
-        ];
+        let mut args = vec!["-y".to_string(), "-i".to_string(), url.to_string()];
 
         // 添加时长限制
         if let Some(duration) = duration_seconds {
-            args.extend(vec![
-                "-t".to_string(),
-                duration.to_string(),
-            ]);
+            args.extend(vec!["-t".to_string(), duration.to_string()]);
         }
 
         // 添加转码参数
@@ -203,59 +196,71 @@ impl PostProcessor {
         match self.config.preset.as_str() {
             "high" => {
                 args.extend(vec![
-                    "-c:v".to_string(), "libx264".to_string(),
-                    "-crf".to_string(), "18".to_string(),
-                    "-preset".to_string(), "slow".to_string(),
-                    "-c:a".to_string(), "aac".to_string(),
-                    "-b:a".to_string(), "192k".to_string(),
+                    "-c:v".to_string(),
+                    "libx264".to_string(),
+                    "-crf".to_string(),
+                    "18".to_string(),
+                    "-preset".to_string(),
+                    "slow".to_string(),
+                    "-c:a".to_string(),
+                    "aac".to_string(),
+                    "-b:a".to_string(),
+                    "192k".to_string(),
                 ]);
             }
             "medium" => {
                 args.extend(vec![
-                    "-c:v".to_string(), "libx264".to_string(),
-                    "-crf".to_string(), "23".to_string(),
-                    "-preset".to_string(), "medium".to_string(),
-                    "-c:a".to_string(), "aac".to_string(),
-                    "-b:a".to_string(), "128k".to_string(),
+                    "-c:v".to_string(),
+                    "libx264".to_string(),
+                    "-crf".to_string(),
+                    "23".to_string(),
+                    "-preset".to_string(),
+                    "medium".to_string(),
+                    "-c:a".to_string(),
+                    "aac".to_string(),
+                    "-b:a".to_string(),
+                    "128k".to_string(),
                 ]);
             }
             "low" => {
                 args.extend(vec![
-                    "-c:v".to_string(), "libx264".to_string(),
-                    "-crf".to_string(), "28".to_string(),
-                    "-preset".to_string(), "fast".to_string(),
-                    "-c:a".to_string(), "aac".to_string(),
-                    "-b:a".to_string(), "96k".to_string(),
+                    "-c:v".to_string(),
+                    "libx264".to_string(),
+                    "-crf".to_string(),
+                    "28".to_string(),
+                    "-preset".to_string(),
+                    "fast".to_string(),
+                    "-c:a".to_string(),
+                    "aac".to_string(),
+                    "-b:a".to_string(),
+                    "96k".to_string(),
                 ]);
             }
             "copy" => {
-                args.extend(vec![
-                    "-c".to_string(), "copy".to_string(),
-                ]);
+                args.extend(vec!["-c".to_string(), "copy".to_string()]);
             }
             "custom" => {
-                args.extend(vec![
-                    "-c:v".to_string(), "libx264".to_string(),
-                ]);
+                args.extend(vec!["-c:v".to_string(), "libx264".to_string()]);
 
                 if !self.config.video_bitrate.is_empty() {
-                    args.extend(vec![
-                        "-b:v".to_string(), self.config.video_bitrate.clone(),
-                    ]);
+                    args.extend(vec!["-b:v".to_string(), self.config.video_bitrate.clone()]);
                 } else {
-                    args.extend(vec![
-                        "-crf".to_string(), self.config.crf.to_string(),
-                    ]);
+                    args.extend(vec!["-crf".to_string(), self.config.crf.to_string()]);
                 }
 
                 args.extend(vec![
-                    "-preset".to_string(), self.config.encode_preset.clone(),
-                    "-c:a".to_string(), "aac".to_string(),
-                    "-b:a".to_string(), self.config.audio_bitrate.clone(),
+                    "-preset".to_string(),
+                    self.config.encode_preset.clone(),
+                    "-c:a".to_string(),
+                    "aac".to_string(),
+                    "-b:a".to_string(),
+                    self.config.audio_bitrate.clone(),
                 ]);
 
                 if !self.config.custom_args.is_empty() {
-                    let custom: Vec<String> = self.config.custom_args
+                    let custom: Vec<String> = self
+                        .config
+                        .custom_args
                         .split_whitespace()
                         .map(|s| s.to_string())
                         .collect();
@@ -264,11 +269,16 @@ impl PostProcessor {
             }
             _ => {
                 args.extend(vec![
-                    "-c:v".to_string(), "libx264".to_string(),
-                    "-crf".to_string(), "23".to_string(),
-                    "-preset".to_string(), "medium".to_string(),
-                    "-c:a".to_string(), "aac".to_string(),
-                    "-b:a".to_string(), "128k".to_string(),
+                    "-c:v".to_string(),
+                    "libx264".to_string(),
+                    "-crf".to_string(),
+                    "23".to_string(),
+                    "-preset".to_string(),
+                    "medium".to_string(),
+                    "-c:a".to_string(),
+                    "aac".to_string(),
+                    "-b:a".to_string(),
+                    "128k".to_string(),
                 ]);
             }
         }

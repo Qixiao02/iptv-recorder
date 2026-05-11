@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::Command;
-use tokio::sync::{oneshot, RwLock, watch};
+use tokio::sync::{oneshot, watch, RwLock};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -73,8 +73,12 @@ pub enum ProcessStatus {
     Running,
     #[allow(dead_code)]
     Stopping,
-    Completed { exit_code: Option<i32> },
-    Failed { error: String },
+    Completed {
+        exit_code: Option<i32>,
+    },
+    Failed {
+        error: String,
+    },
     #[allow(dead_code)]
     Cancelled,
 }
@@ -112,14 +116,14 @@ impl ProcessManager {
     }
 
     /// 启动录制进程
-    pub async fn start_recording(
-        &self,
-        config: RecordingConfig,
-    ) -> Result<RecordingHandle> {
+    pub async fn start_recording(&self, config: RecordingConfig) -> Result<RecordingHandle> {
         let id = Uuid::new_v4();
         let task_id = config.task_id.clone();
 
-        info!("🎬 启动录制任务: task_id={}, channel={}", task_id, config.channel_name);
+        info!(
+            "🎬 启动录制任务: task_id={}, channel={}",
+            task_id, config.channel_name
+        );
 
         // 确保输出目录存在
         if let Some(parent) = config.output_path.parent() {
@@ -137,8 +141,7 @@ impl ProcessManager {
         let mut cmd = Command::new(recorder_path);
 
         // 基本参数
-        cmd.arg(&config.url)
-            .arg("--tmp-dir").arg(&self.temp_dir);
+        cmd.arg(&config.url).arg("--tmp-dir").arg(&self.temp_dir);
 
         // 视频质量选择
         match config.video_quality.as_str() {
@@ -147,7 +150,8 @@ impl ProcessManager {
             }
             "1080p" | "720p" | "480p" | "360p" => {
                 // 按分辨率选择
-                cmd.arg("-sv").arg(format!("res=\"{}\"", config.video_quality));
+                cmd.arg("-sv")
+                    .arg(format!("res=\"{}\"", config.video_quality));
                 cmd.arg("-sa").arg("best");
             }
             _ => {
@@ -233,7 +237,8 @@ impl ProcessManager {
         let (status_tx, status_rx) = watch::channel(ProcessStatus::Starting);
 
         // 启动进程
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| anyhow!("启动录制进程失败: {}", e))?;
 
         let process_id = id;
@@ -243,11 +248,14 @@ impl ProcessManager {
         // 注册进程
         {
             let mut processes = self.processes.write().await;
-            processes.insert(id, ProcessInfo {
+            processes.insert(
                 id,
-                task_id: task_id.clone(),
-                kill_tx,
-            });
+                ProcessInfo {
+                    id,
+                    task_id: task_id.clone(),
+                    kill_tx,
+                },
+            );
         }
 
         // 更新状态为运行中
@@ -285,22 +293,23 @@ impl ProcessManager {
                 Ok(exit_code) => {
                     // Some(0) = 正常退出, None = 被取消
                     if exit_code == Some(0) || exit_code.is_none() {
-                        info!("✅ 录制完成: task_id={}, output={}", task_id_clone, output_path.display());
-                        let _ = status_tx.send(ProcessStatus::Completed {
-                            exit_code,
-                        });
+                        info!(
+                            "✅ 录制完成: task_id={}, output={}",
+                            task_id_clone,
+                            output_path.display()
+                        );
+                        let _ = status_tx.send(ProcessStatus::Completed { exit_code });
                     } else {
-                        warn!("⚠️ 录制进程异常退出: task_id={}, code={:?}", task_id_clone, exit_code);
-                        let _ = status_tx.send(ProcessStatus::Completed {
-                            exit_code,
-                        });
+                        warn!(
+                            "⚠️ 录制进程异常退出: task_id={}, code={:?}",
+                            task_id_clone, exit_code
+                        );
+                        let _ = status_tx.send(ProcessStatus::Completed { exit_code });
                     }
                 }
                 Err(e) => {
                     error!("❌ 录制进程错误: task_id={}, error={}", task_id_clone, e);
-                    let _ = status_tx.send(ProcessStatus::Failed {
-                        error: e,
-                    });
+                    let _ = status_tx.send(ProcessStatus::Failed { error: e });
                 }
             }
         });
@@ -320,14 +329,14 @@ impl ProcessManager {
         // 从进程列表中获取并移除
         let kill_tx = {
             let mut processes = self.processes.write().await;
-            processes.remove(&handle.id)
+            processes
+                .remove(&handle.id)
                 .map(|info| info.kill_tx)
                 .ok_or_else(|| anyhow!("录制任务不存在: {}", handle.task_id))?
         };
 
         // 发送终止信号
-        kill_tx.send(())
-            .map_err(|_| anyhow!("发送终止信号失败"))?;
+        kill_tx.send(()).map_err(|_| anyhow!("发送终止信号失败"))?;
 
         // 等待最多 5 秒让进程优雅退出
         let _ = timeout(Duration::from_secs(5), async {
@@ -337,7 +346,8 @@ impl ProcessManager {
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }).await;
+        })
+        .await;
 
         Ok(())
     }
@@ -392,7 +402,10 @@ impl ProcessManager {
     pub async fn stop_all(&self) -> Result<()> {
         let processes: Vec<_> = {
             let processes = self.processes.read().await;
-            processes.values().map(|p| (p.id, p.task_id.clone())).collect()
+            processes
+                .values()
+                .map(|p| (p.id, p.task_id.clone()))
+                .collect()
         };
 
         for (id, task_id) in processes {

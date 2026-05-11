@@ -6,7 +6,7 @@
 
 mod user;
 
-pub use user::{User, UserRole, LoginRequest, LoginResponse, UserInfo, ChangePasswordRequest};
+pub use user::{ChangePasswordRequest, LoginRequest, LoginResponse, User, UserInfo, UserRole};
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

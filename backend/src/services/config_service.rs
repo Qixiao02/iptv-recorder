@@ -94,14 +94,20 @@ impl ConfigService {
 
         // 从数据库读取其他配置
         let storage = StorageConfigResponse {
-            recordings_path: self.get_value_string("storage.recordings_path", "./data/recordings").await?,
+            recordings_path: self
+                .get_value_string("storage.recordings_path", "./data/recordings")
+                .await?,
             auto_cleanup_days: self.get_value("storage.auto_cleanup_days", 30).await?,
             min_free_space_gb: self.get_value("storage.min_free_space_gb", 10).await?,
         };
 
         let recording = RecordingConfigResponse {
-            default_duration_minutes: self.get_value("recording.default_duration_minutes", 60).await?,
-            n_m3u8dl_re_path: self.get_value_string("recording.n_m3u8dl_re_path", "N_m3u8DL-RE").await?,
+            default_duration_minutes: self
+                .get_value("recording.default_duration_minutes", 60)
+                .await?,
+            n_m3u8dl_re_path: self
+                .get_value_string("recording.n_m3u8dl_re_path", "N_m3u8DL-RE")
+                .await?,
             max_retry: self.get_value("recording.max_retry", 3).await?,
             thread_count: self.get_value("recording.thread_count", 4).await?,
         };
@@ -138,7 +144,9 @@ impl ConfigService {
         if let Some(ref recording) = req.recording {
             if let Some(minutes) = recording.default_duration_minutes {
                 if !(1..=1440).contains(&minutes) {
-                    return Err(anyhow::anyhow!("default_duration_minutes 必须在 1-1440 之间"));
+                    return Err(anyhow::anyhow!(
+                        "default_duration_minutes 必须在 1-1440 之间"
+                    ));
                 }
             }
             if let Some(retry) = recording.max_retry {
@@ -159,39 +167,47 @@ impl ConfigService {
                 self.set_value("storage.recordings_path", &v).await?;
             }
             if let Some(v) = storage.auto_cleanup_days {
-                self.set_value("storage.auto_cleanup_days", &v.to_string()).await?;
+                self.set_value("storage.auto_cleanup_days", &v.to_string())
+                    .await?;
             }
             if let Some(v) = storage.min_free_space_gb {
-                self.set_value("storage.min_free_space_gb", &v.to_string()).await?;
+                self.set_value("storage.min_free_space_gb", &v.to_string())
+                    .await?;
             }
         }
 
         // 更新录制配置
         if let Some(recording) = req.recording {
             if let Some(v) = recording.default_duration_minutes {
-                self.set_value("recording.default_duration_minutes", &v.to_string()).await?;
+                self.set_value("recording.default_duration_minutes", &v.to_string())
+                    .await?;
             }
             if let Some(v) = recording.n_m3u8dl_re_path {
                 self.set_value("recording.n_m3u8dl_re_path", &v).await?;
             }
             if let Some(v) = recording.max_retry {
-                self.set_value("recording.max_retry", &v.to_string()).await?;
+                self.set_value("recording.max_retry", &v.to_string())
+                    .await?;
             }
             if let Some(v) = recording.thread_count {
-                self.set_value("recording.thread_count", &v.to_string()).await?;
+                self.set_value("recording.thread_count", &v.to_string())
+                    .await?;
             }
         }
 
         // 更新通知配置
         if let Some(notification) = req.notification {
             if let Some(v) = notification.on_complete {
-                self.set_value("notification.on_complete", &v.to_string()).await?;
+                self.set_value("notification.on_complete", &v.to_string())
+                    .await?;
             }
             if let Some(v) = notification.on_failure {
-                self.set_value("notification.on_failure", &v.to_string()).await?;
+                self.set_value("notification.on_failure", &v.to_string())
+                    .await?;
             }
             if let Some(v) = notification.disk_warning {
-                self.set_value("notification.disk_warning", &v.to_string()).await?;
+                self.set_value("notification.disk_warning", &v.to_string())
+                    .await?;
             }
         }
 
@@ -204,12 +220,11 @@ impl ConfigService {
     where
         T: std::str::FromStr,
     {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_config WHERE key = ?"
-        )
-        .bind(key)
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM system_config WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.ctx.db)
+                .await?;
 
         if let Some((value,)) = row {
             value.parse().or(Ok(default))
@@ -220,12 +235,11 @@ impl ConfigService {
 
     /// 从数据库获取字符串配置值
     async fn get_value_string(&self, key: &str, default: &str) -> Result<String> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_config WHERE key = ?"
-        )
-        .bind(key)
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM system_config WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.ctx.db)
+                .await?;
 
         if let Some((value,)) = row {
             Ok(value)
@@ -243,7 +257,7 @@ impl ConfigService {
             ON CONFLICT(key) DO UPDATE SET
                 value = excluded.value,
                 updated_at = datetime('now')
-            "#
+            "#,
         )
         .bind(key)
         .bind(value)

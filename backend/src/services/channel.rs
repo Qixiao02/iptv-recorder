@@ -81,24 +81,20 @@ impl ChannelService {
 
     /// 根据 ID 获取频道
     pub async fn get_by_id(&self, id: &str) -> Result<Channel> {
-        let row = sqlx::query_as::<_, Channel>(
-            "SELECT * FROM channels WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_one(&self.ctx.db)
-        .await?;
+        let row = sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.ctx.db)
+            .await?;
 
         Ok(row)
     }
 
     /// 根据 URL 获取频道
     pub async fn get_by_url(&self, url: &str) -> Result<Option<Channel>> {
-        let channel = sqlx::query_as::<_, Channel>(
-            "SELECT * FROM channels WHERE url = ? LIMIT 1"
-        )
-        .bind(url)
-        .fetch_optional(&self.ctx.db)
-        .await?;
+        let channel = sqlx::query_as::<_, Channel>("SELECT * FROM channels WHERE url = ? LIMIT 1")
+            .bind(url)
+            .fetch_optional(&self.ctx.db)
+            .await?;
 
         Ok(channel)
     }
@@ -106,11 +102,10 @@ impl ChannelService {
     /// 获取所有频道
     #[allow(dead_code)]
     pub async fn list(&self) -> Result<Vec<Channel>> {
-        let channels = sqlx::query_as::<_, Channel>(
-            "SELECT * FROM channels ORDER BY group_name, name"
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let channels =
+            sqlx::query_as::<_, Channel>("SELECT * FROM channels ORDER BY group_name, name")
+                .fetch_all(&self.ctx.db)
+                .await?;
 
         Ok(channels)
     }
@@ -151,10 +146,7 @@ impl ChannelService {
         for value in &bind_values {
             count_query = count_query.bind(value);
         }
-        let total: i64 = count_query
-            .fetch_one(&self.ctx.db)
-            .await?
-            .get("count");
+        let total: i64 = count_query.fetch_one(&self.ctx.db).await?.get("count");
 
         // 查询分页数据
         let data_sql = format!(
@@ -186,7 +178,7 @@ impl ChannelService {
     #[allow(dead_code)]
     pub async fn list_by_group(&self, group: &str) -> Result<Vec<Channel>> {
         let channels = sqlx::query_as::<_, Channel>(
-            "SELECT * FROM channels WHERE group_name = ? ORDER BY name"
+            "SELECT * FROM channels WHERE group_name = ? ORDER BY name",
         )
         .bind(group)
         .fetch_all(&self.ctx.db)
@@ -197,13 +189,12 @@ impl ChannelService {
 
     /// 获取所有分组
     pub async fn list_groups(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT group_name FROM channels ORDER BY group_name"
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let rows = sqlx::query("SELECT DISTINCT group_name FROM channels ORDER BY group_name")
+            .fetch_all(&self.ctx.db)
+            .await?;
 
-        let groups = rows.iter()
+        let groups = rows
+            .iter()
             .filter_map(|r| r.try_get("group_name").ok())
             .collect();
 
@@ -237,7 +228,11 @@ impl ChannelService {
     }
 
     /// 导入频道，支持覆盖现有频道
-    pub async fn import_channel(&self, req: CreateChannelRequest, overwrite: bool) -> Result<ImportChannelResult> {
+    pub async fn import_channel(
+        &self,
+        req: CreateChannelRequest,
+        overwrite: bool,
+    ) -> Result<ImportChannelResult> {
         let req = normalize_channel_request(req);
         if let Some(existing) = self.get_by_url(&req.url).await? {
             if overwrite {
@@ -267,14 +262,12 @@ impl ChannelService {
     pub async fn update_status(&self, id: &str, status: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
 
-        sqlx::query(
-            "UPDATE channels SET status = ?, last_check_at = ? WHERE id = ?"
-        )
-        .bind(status)
-        .bind(&now)
-        .bind(id)
-        .execute(&self.ctx.db)
-        .await?;
+        sqlx::query("UPDATE channels SET status = ?, last_check_at = ? WHERE id = ?")
+            .bind(status)
+            .bind(&now)
+            .bind(id)
+            .execute(&self.ctx.db)
+            .await?;
 
         Ok(())
     }
@@ -290,10 +283,7 @@ impl ChannelService {
             .danger_accept_invalid_certs(true)
             .build()?;
 
-        let result = client
-            .head(&url)
-            .send()
-            .await;
+        let result = client.head(&url).send().await;
 
         let response_time_ms = Some(start.elapsed().as_millis() as u64);
 
@@ -310,7 +300,13 @@ impl ChannelService {
                         .await;
 
                     match get_result {
-                        Ok(r) => if r.status().is_success() { "online" } else { "offline" },
+                        Ok(r) => {
+                            if r.status().is_success() {
+                                "online"
+                            } else {
+                                "offline"
+                            }
+                        }
                         Err(_) => "offline",
                     }
                 } else {
@@ -366,7 +362,10 @@ fn normalize_channel_request(mut req: CreateChannelRequest) -> CreateChannelRequ
 mod tests {
     use super::*;
     use crate::{config::Config, core::database};
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -407,7 +406,10 @@ mod tests {
             playback_strategy: "auto".to_string(),
         };
 
-        let result = service.import_channel(duplicate, false).await.expect("import channel");
+        let result = service
+            .import_channel(duplicate, false)
+            .await
+            .expect("import channel");
         assert!(matches!(result, ImportChannelResult::Skipped));
 
         let stored = service
@@ -424,23 +426,32 @@ mod tests {
     #[tokio::test]
     async fn import_channel_updates_existing_when_overwrite_enabled() {
         let (service, db_path) = test_service("channel-overwrite").await;
-        service.create(CreateChannelRequest {
-            name: "CCTV-1".to_string(),
-            url: "http://example.com/live.m3u8".to_string(),
-            group_name: "央视".to_string(),
-            logo_url: None,
-            source_visibility: "public".to_string(),
-            playback_strategy: "auto".to_string(),
-        }).await.expect("create channel");
+        service
+            .create(CreateChannelRequest {
+                name: "CCTV-1".to_string(),
+                url: "http://example.com/live.m3u8".to_string(),
+                group_name: "央视".to_string(),
+                logo_url: None,
+                source_visibility: "public".to_string(),
+                playback_strategy: "auto".to_string(),
+            })
+            .await
+            .expect("create channel");
 
-        let result = service.import_channel(CreateChannelRequest {
-            name: "CCTV-1 HD".to_string(),
-            url: "http://example.com/live.m3u8".to_string(),
-            group_name: "高清".to_string(),
-            logo_url: Some("http://example.com/logo.png".to_string()),
-            source_visibility: "public".to_string(),
-            playback_strategy: "auto".to_string(),
-        }, true).await.expect("import overwrite");
+        let result = service
+            .import_channel(
+                CreateChannelRequest {
+                    name: "CCTV-1 HD".to_string(),
+                    url: "http://example.com/live.m3u8".to_string(),
+                    group_name: "高清".to_string(),
+                    logo_url: Some("http://example.com/logo.png".to_string()),
+                    source_visibility: "public".to_string(),
+                    playback_strategy: "auto".to_string(),
+                },
+                true,
+            )
+            .await
+            .expect("import overwrite");
 
         assert!(matches!(result, ImportChannelResult::Updated));
 
@@ -451,7 +462,10 @@ mod tests {
             .expect("existing channel");
         assert_eq!(stored.name, "CCTV-1 HD");
         assert_eq!(stored.group_name, "高清");
-        assert_eq!(stored.logo_url.as_deref(), Some("http://example.com/logo.png"));
+        assert_eq!(
+            stored.logo_url.as_deref(),
+            Some("http://example.com/logo.png")
+        );
 
         let _ = tokio::fs::remove_file(db_path).await;
     }

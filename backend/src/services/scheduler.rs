@@ -13,12 +13,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tracing::{info, error};
+use tracing::{error, info};
 
 use crate::config::Config;
 use crate::core::ProcessManager;
 use crate::models::ManualRecordRequest;
-use crate::services::{ScheduleService, ServiceContext, RecordingService};
+use crate::services::{RecordingService, ScheduleService, ServiceContext};
 
 /// 调度器管理器
 pub struct SchedulerManager {
@@ -36,7 +36,11 @@ pub struct SchedulerManager {
 
 impl SchedulerManager {
     /// 创建新的调度器管理器
-    pub async fn new(db: Pool<Sqlite>, config: Config, process_manager: Arc<ProcessManager>) -> Result<Self> {
+    pub async fn new(
+        db: Pool<Sqlite>,
+        config: Config,
+        process_manager: Arc<ProcessManager>,
+    ) -> Result<Self> {
         let scheduler = JobScheduler::new().await?;
 
         Ok(Self {
@@ -157,7 +161,10 @@ impl SchedulerManager {
             let schedule_name = schedule_name_for_job.clone();
 
             Box::pin(async move {
-                info!("🕐 触发定时任务: schedule_id={}, channel_id={}", schedule_id, channel_id);
+                info!(
+                    "🕐 触发定时任务: schedule_id={}, channel_id={}",
+                    schedule_id, channel_id
+                );
 
                 let ctx = ServiceContext::new(db, config);
                 let service = RecordingService::new(pm, ctx, None);
@@ -178,10 +185,16 @@ impl SchedulerManager {
 
                 match service.start_manual(req).await {
                     Ok(task) => {
-                        info!("✅ 定时录制任务已创建: schedule_id={}, task_id={}", schedule_id, task.id);
+                        info!(
+                            "✅ 定时录制任务已创建: schedule_id={}, task_id={}",
+                            schedule_id, task.id
+                        );
                     }
                     Err(e) => {
-                        error!("❌ 定时录制任务创建失败: schedule_id={}, error={}", schedule_id, e);
+                        error!(
+                            "❌ 定时录制任务创建失败: schedule_id={}, error={}",
+                            schedule_id, e
+                        );
                     }
                 }
             })
@@ -317,8 +330,7 @@ impl SchedulerManager {
             .map_err(|e| anyhow::anyhow!("无效的 Cron 表达式 '{}': {}", cron_expr_6field, e))?;
 
         let timezone_str = &self.config.scheduler.timezone;
-        let timezone = chrono_tz::Tz::from_str(timezone_str)
-            .unwrap_or(chrono_tz::UTC);
+        let timezone = chrono_tz::Tz::from_str(timezone_str).unwrap_or(chrono_tz::UTC);
 
         let _now = Utc::now().with_timezone(&timezone);
 
@@ -344,10 +356,7 @@ impl CronTrigger {
 
     /// 手动触发所有计划（用于测试）
     pub async fn trigger_all(&self) -> Result<Vec<String>> {
-        let ctx = ServiceContext::new(
-            self.scheduler.db.clone(),
-            self.scheduler.config.clone(),
-        );
+        let ctx = ServiceContext::new(self.scheduler.db.clone(), self.scheduler.config.clone());
         let schedule_service = ScheduleService::new(ctx);
 
         let schedules = schedule_service.list_enabled().await?;
@@ -369,10 +378,7 @@ impl CronTrigger {
 
     /// 获取下次执行时间列表
     pub async fn get_upcoming(&self) -> Result<Vec<UpcomingTask>> {
-        let ctx = ServiceContext::new(
-            self.scheduler.db.clone(),
-            self.scheduler.config.clone(),
-        );
+        let ctx = ServiceContext::new(self.scheduler.db.clone(), self.scheduler.config.clone());
         let schedule_service = ScheduleService::new(ctx);
 
         let schedules = schedule_service.list_enabled().await?;
@@ -415,8 +421,15 @@ pub struct UpcomingTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Config, core::{database, process::ProcessManager}, models::Schedule};
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use crate::{
+        config::Config,
+        core::{database, process::ProcessManager},
+        models::Schedule,
+    };
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -434,7 +447,10 @@ mod tests {
         let manager = SchedulerManager::new(
             db,
             Config::default(),
-            Arc::new(ProcessManager::new(PathBuf::from("recorder"), PathBuf::from("tmp"))),
+            Arc::new(ProcessManager::new(
+                PathBuf::from("recorder"),
+                PathBuf::from("tmp"),
+            )),
         )
         .await
         .expect("scheduler init");
@@ -475,14 +491,22 @@ mod tests {
             .sync_schedule(&enabled_schedule)
             .await
             .expect("add enabled schedule");
-        assert!(manager.job_uuids.read().await.contains_key(&enabled_schedule.id));
+        assert!(manager
+            .job_uuids
+            .read()
+            .await
+            .contains_key(&enabled_schedule.id));
 
         let disabled_schedule = sample_schedule(false);
         manager
             .sync_schedule(&disabled_schedule)
             .await
             .expect("remove disabled schedule");
-        assert!(!manager.job_uuids.read().await.contains_key(&disabled_schedule.id));
+        assert!(!manager
+            .job_uuids
+            .read()
+            .await
+            .contains_key(&disabled_schedule.id));
 
         let _ = tokio::fs::remove_file(db_path).await;
     }

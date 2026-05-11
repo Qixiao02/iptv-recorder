@@ -1,7 +1,7 @@
 //! 录制计划服务
 
 use crate::{
-    models::{Schedule, CreateScheduleRequest},
+    models::{CreateScheduleRequest, Schedule},
     services::ServiceContext,
 };
 use anyhow::Result;
@@ -54,23 +54,20 @@ impl ScheduleService {
 
     /// 根据 ID 获取计划
     pub async fn get_by_id(&self, id: &str) -> Result<Schedule> {
-        let schedule = sqlx::query_as::<_, Schedule>(
-            "SELECT * FROM schedules WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_one(&self.ctx.db)
-        .await?;
+        let schedule = sqlx::query_as::<_, Schedule>("SELECT * FROM schedules WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.ctx.db)
+            .await?;
 
         Ok(schedule)
     }
 
     /// 获取所有计划
     pub async fn list(&self) -> Result<Vec<Schedule>> {
-        let schedules = sqlx::query_as::<_, Schedule>(
-            "SELECT * FROM schedules ORDER BY created_at DESC"
-        )
-        .fetch_all(&self.ctx.db)
-        .await?;
+        let schedules =
+            sqlx::query_as::<_, Schedule>("SELECT * FROM schedules ORDER BY created_at DESC")
+                .fetch_all(&self.ctx.db)
+                .await?;
 
         Ok(schedules)
     }
@@ -79,7 +76,7 @@ impl ScheduleService {
     #[allow(dead_code)]
     pub async fn list_enabled(&self) -> Result<Vec<Schedule>> {
         let schedules = sqlx::query_as::<_, Schedule>(
-            "SELECT * FROM schedules WHERE enabled = 1 ORDER BY priority DESC"
+            "SELECT * FROM schedules WHERE enabled = 1 ORDER BY priority DESC",
         )
         .fetch_all(&self.ctx.db)
         .await?;
@@ -176,14 +173,38 @@ impl From<CreateScheduleRequest> for NormalizedScheduleRequest {
                 .output_template
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "{channel_name}_{date}_{time}.mp4".to_string()),
-            output_dir: req.output_dir.and_then(|s| if s.is_empty() { None } else { Some(s) }),
+            output_dir: req
+                .output_dir
+                .and_then(|s| if s.is_empty() { None } else { Some(s) }),
             priority: req.priority.unwrap_or(5),
-            video_quality: if req.video_quality.is_empty() { "best".to_string() } else { req.video_quality },
-            audio_quality: if req.audio_quality.is_empty() { "best".to_string() } else { req.audio_quality },
-            max_speed: req.max_speed.and_then(|s| if s.is_empty() { None } else { Some(s) }),
-            thread_count: if req.thread_count == 0 { 20 } else { req.thread_count },
-            transcode_mode: if req.transcode_mode.is_empty() { "off".to_string() } else { req.transcode_mode },
-            transcode_preset: if req.transcode_preset.is_empty() { "medium".to_string() } else { req.transcode_preset },
+            video_quality: if req.video_quality.is_empty() {
+                "best".to_string()
+            } else {
+                req.video_quality
+            },
+            audio_quality: if req.audio_quality.is_empty() {
+                "best".to_string()
+            } else {
+                req.audio_quality
+            },
+            max_speed: req
+                .max_speed
+                .and_then(|s| if s.is_empty() { None } else { Some(s) }),
+            thread_count: if req.thread_count == 0 {
+                20
+            } else {
+                req.thread_count
+            },
+            transcode_mode: if req.transcode_mode.is_empty() {
+                "off".to_string()
+            } else {
+                req.transcode_mode
+            },
+            transcode_preset: if req.transcode_preset.is_empty() {
+                "medium".to_string()
+            } else {
+                req.transcode_preset
+            },
         }
     }
 }
@@ -192,7 +213,10 @@ impl From<CreateScheduleRequest> for NormalizedScheduleRequest {
 mod tests {
     use super::*;
     use crate::{config::Config, core::database};
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_db_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -222,28 +246,34 @@ mod tests {
         .await
         .expect("insert channel");
 
-        (ScheduleService::new(ServiceContext::new(db, Config::default())), db_path)
+        (
+            ScheduleService::new(ServiceContext::new(db, Config::default())),
+            db_path,
+        )
     }
 
     #[tokio::test]
     async fn create_and_update_normalize_optional_fields() {
         let (service, db_path) = test_service("schedule-normalization").await;
 
-        let created = service.create(CreateScheduleRequest {
-            name: "Morning".to_string(),
-            channel_id: "channel-1".to_string(),
-            cron_expression: "0 8 * * *".to_string(),
-            duration_seconds: 1800,
-            output_template: Some(String::new()),
-            output_dir: Some(String::new()),
-            priority: None,
-            video_quality: String::new(),
-            audio_quality: String::new(),
-            max_speed: Some(String::new()),
-            thread_count: 0,
-            transcode_mode: String::new(),
-            transcode_preset: String::new(),
-        }).await.expect("create schedule");
+        let created = service
+            .create(CreateScheduleRequest {
+                name: "Morning".to_string(),
+                channel_id: "channel-1".to_string(),
+                cron_expression: "0 8 * * *".to_string(),
+                duration_seconds: 1800,
+                output_template: Some(String::new()),
+                output_dir: Some(String::new()),
+                priority: None,
+                video_quality: String::new(),
+                audio_quality: String::new(),
+                max_speed: Some(String::new()),
+                thread_count: 0,
+                transcode_mode: String::new(),
+                transcode_preset: String::new(),
+            })
+            .await
+            .expect("create schedule");
 
         assert_eq!(created.output_template, "{channel_name}_{date}_{time}.mp4");
         assert_eq!(created.output_dir, None);
@@ -255,21 +285,27 @@ mod tests {
         assert_eq!(created.transcode_mode, "off");
         assert_eq!(created.transcode_preset, "medium");
 
-        let updated = service.update(&created.id, CreateScheduleRequest {
-            name: "Morning Updated".to_string(),
-            channel_id: "channel-1".to_string(),
-            cron_expression: "0 9 * * *".to_string(),
-            duration_seconds: 2400,
-            output_template: Some(String::new()),
-            output_dir: Some(String::new()),
-            priority: None,
-            video_quality: String::new(),
-            audio_quality: String::new(),
-            max_speed: Some(String::new()),
-            thread_count: 0,
-            transcode_mode: String::new(),
-            transcode_preset: String::new(),
-        }).await.expect("update schedule");
+        let updated = service
+            .update(
+                &created.id,
+                CreateScheduleRequest {
+                    name: "Morning Updated".to_string(),
+                    channel_id: "channel-1".to_string(),
+                    cron_expression: "0 9 * * *".to_string(),
+                    duration_seconds: 2400,
+                    output_template: Some(String::new()),
+                    output_dir: Some(String::new()),
+                    priority: None,
+                    video_quality: String::new(),
+                    audio_quality: String::new(),
+                    max_speed: Some(String::new()),
+                    thread_count: 0,
+                    transcode_mode: String::new(),
+                    transcode_preset: String::new(),
+                },
+            )
+            .await
+            .expect("update schedule");
 
         assert_eq!(updated.name, "Morning Updated");
         assert_eq!(updated.output_template, "{channel_name}_{date}_{time}.mp4");

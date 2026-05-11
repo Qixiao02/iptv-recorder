@@ -64,15 +64,19 @@ pub async fn operator_middleware(
     request: Request,
     next: Next,
 ) -> Result<axum::response::Response, (StatusCode, Json<AuthError>)> {
-    let claims = request.extensions().get::<Claims>().cloned().ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(AuthError {
-                error: "unauthorized".to_string(),
-                details: Some("缺少认证上下文".to_string()),
-            }),
-        )
-    })?;
+    let claims = request
+        .extensions()
+        .get::<Claims>()
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(AuthError {
+                    error: "unauthorized".to_string(),
+                    details: Some("缺少认证上下文".to_string()),
+                }),
+            )
+        })?;
 
     if !claims.can_manage_content() {
         return Err((
@@ -92,15 +96,19 @@ pub async fn admin_middleware(
     request: Request,
     next: Next,
 ) -> Result<axum::response::Response, (StatusCode, Json<AuthError>)> {
-    let claims = request.extensions().get::<Claims>().cloned().ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(AuthError {
-                error: "unauthorized".to_string(),
-                details: Some("缺少认证上下文".to_string()),
-            }),
-        )
-    })?;
+    let claims = request
+        .extensions()
+        .get::<Claims>()
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(AuthError {
+                    error: "unauthorized".to_string(),
+                    details: Some("缺少认证上下文".to_string()),
+                }),
+            )
+        })?;
 
     if !claims.can_manage_security() {
         return Err((

@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -79,8 +79,12 @@ impl M3UParser {
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
-        let response = client.get(url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        let response = client
+            .get(url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            )
             .send()
             .await
             .context("Failed to fetch M3U file")?;
@@ -89,7 +93,8 @@ impl M3UParser {
             anyhow::bail!("HTTP error: {}", response.status());
         }
 
-        let content = response.text()
+        let content = response
+            .text()
             .await
             .context("Failed to read M3U content")?;
 
@@ -135,7 +140,10 @@ impl M3UParser {
         // 第一行应该是 #EXTM3U
         let first_line = lines[0].trim();
         if !first_line.eq_ignore_ascii_case("#EXTM3U") && !first_line.starts_with("#EXTM3U") {
-            result.errors.push(format!("无效的 M3U 文件，第一行应为 #EXTM3U，实际: {}", first_line));
+            result.errors.push(format!(
+                "无效的 M3U 文件，第一行应为 #EXTM3U，实际: {}",
+                first_line
+            ));
             // 继续尝试解析
         }
 
@@ -152,7 +160,8 @@ impl M3UParser {
 
             if line.starts_with("#EXTINF:") {
                 // 解析 #EXTINF 行
-                let info = extinf_re.captures(line)
+                let info = extinf_re
+                    .captures(line)
                     .and_then(|c| c.get(1))
                     .map(|m| m.as_str())
                     .unwrap_or("");
@@ -201,9 +210,15 @@ impl M3UParser {
                 };
 
                 // 验证 URL
-                if !url.is_empty() && (url.starts_with("http://") || url.starts_with("https://") || url.starts_with("/")) {
+                if !url.is_empty()
+                    && (url.starts_with("http://")
+                        || url.starts_with("https://")
+                        || url.starts_with("/"))
+                {
                     let channel = Self::build_channel(
-                        current_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                        current_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string()),
                         url,
                         &current_attrs,
                     );
@@ -226,19 +241,23 @@ impl M3UParser {
 
     /// 构建频道信息
     fn build_channel(name: String, url: String, attrs: &[(String, String)]) -> M3UChannel {
-        let tvg_id = attrs.iter()
+        let tvg_id = attrs
+            .iter()
             .find(|(k, _)| k == "tvg-id")
             .map(|(_, v)| v.clone());
 
-        let tvg_name = attrs.iter()
+        let tvg_name = attrs
+            .iter()
             .find(|(k, _)| k == "tvg-name")
             .map(|(_, v)| v.clone());
 
-        let logo = attrs.iter()
+        let logo = attrs
+            .iter()
             .find(|(k, _)| k == "tvg-logo")
             .map(|(_, v)| v.clone());
 
-        let group = attrs.iter()
+        let group = attrs
+            .iter()
             .find(|(k, _)| k == "group-title")
             .map(|(_, v)| v.clone())
             .unwrap_or_else(|| "Uncategorized".to_string());
@@ -314,7 +333,10 @@ http://example.com/cctv1.m3u8
         assert_eq!(result.channels.len(), 1);
         assert_eq!(result.channels[0].name, "CCTV-1");
         assert_eq!(result.channels[0].tvg_id.as_ref().unwrap(), "cctv1");
-        assert_eq!(result.channels[0].logo.as_ref().unwrap(), "http://example.com/logo.png");
+        assert_eq!(
+            result.channels[0].logo.as_ref().unwrap(),
+            "http://example.com/logo.png"
+        );
         assert_eq!(result.channels[0].group, "央视");
     }
 }

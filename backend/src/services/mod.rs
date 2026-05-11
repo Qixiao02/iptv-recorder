@@ -2,31 +2,31 @@
 //!
 //! 包含频道管理、录制调度等核心业务逻辑
 
-pub mod channel;
-pub mod schedule;
-pub mod recording;
-pub mod m3u_parser;
-pub mod scheduler;
-pub mod config_service;
-pub mod transcode;
-pub mod post_process;
-pub mod auth;
 pub mod audit;
+pub mod auth;
+pub mod channel;
 pub mod cleanup;
+pub mod config_service;
 pub mod epg;
+pub mod m3u_parser;
+pub mod post_process;
+pub mod recording;
+pub mod schedule;
+pub mod scheduler;
+pub mod transcode;
 
-pub use channel::{ChannelService, ChannelTestResult, ImportChannelResult, PaginationParams};
-pub use schedule::ScheduleService;
-pub use recording::RecordingService;
-pub use m3u_parser::{M3UParser, M3UParseResult};
-pub use scheduler::{SchedulerManager, CronTrigger, UpcomingTask};
-pub use config_service::{ConfigService, SystemConfig, ConfigUpdateRequest};
-pub use transcode::TranscodeService;
-pub use post_process::PostProcessor;
-pub use auth::{AuthService, Claims};
 pub use audit::AuditService;
+pub use auth::{AuthService, Claims};
+pub use channel::{ChannelService, ChannelTestResult, ImportChannelResult, PaginationParams};
 pub use cleanup::CleanupService;
+pub use config_service::{ConfigService, ConfigUpdateRequest, SystemConfig};
 pub use epg::{EpgService, ImportEpgRequest};
+pub use m3u_parser::{M3UParseResult, M3UParser};
+pub use post_process::PostProcessor;
+pub use recording::RecordingService;
+pub use schedule::ScheduleService;
+pub use scheduler::{CronTrigger, SchedulerManager, UpcomingTask};
+pub use transcode::TranscodeService;
 
 use crate::config::Config;
 use sqlx::{Pool, Sqlite};

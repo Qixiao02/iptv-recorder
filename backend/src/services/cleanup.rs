@@ -4,9 +4,7 @@ use anyhow::Result;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
-use crate::{
-    core::event::{AlertLevel, Event, EventSender, SystemAlertEvent},
-};
+use crate::core::event::{AlertLevel, Event, EventSender, SystemAlertEvent};
 
 use super::ServiceContext;
 
@@ -99,7 +97,11 @@ impl CleanupService {
                 info!("Removed expired recording file {}", path.display());
             }
             Err(e) => {
-                warn!("Failed to remove expired recording file {}: {}", path.display(), e);
+                warn!(
+                    "Failed to remove expired recording file {}: {}",
+                    path.display(),
+                    e
+                );
                 self.send_alert(
                     AlertLevel::Warning,
                     "删除过期录制文件失败",
