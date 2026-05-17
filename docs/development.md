@@ -123,6 +123,35 @@ cargo run -- --config config/custom.toml
 IPTV__SERVER__PORT=8080 cargo run
 ```
 
+### 开发脚本
+
+统一使用项目脚本管理前后端：
+
+```bash
+# 启动前后端
+./scripts/dev.sh start
+
+# 仅启动后端或前端
+./scripts/dev.sh start backend
+./scripts/dev.sh start frontend
+
+# 停止
+./scripts/dev.sh stop
+./scripts/dev.sh stop backend
+
+# 重启
+./scripts/dev.sh restart
+./scripts/dev.sh restart frontend
+
+# 查看状态
+./scripts/dev.sh status
+
+# 查看日志
+./scripts/dev.sh logs backend
+./scripts/dev.sh logs frontend
+./scripts/dev.sh logs all --follow
+```
+
 ### 测试
 
 ```bash
