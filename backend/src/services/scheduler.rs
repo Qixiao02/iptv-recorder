@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use chrono::Utc;
+use chrono_tz::Tz;
 use cron::Schedule;
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
@@ -141,9 +142,10 @@ impl SchedulerManager {
         let transcode_mode_for_job = schedule.transcode_mode.clone();
         let transcode_preset_for_job = schedule.transcode_preset.clone();
         let schedule_name_for_job = schedule.name.clone();
+        let timezone_for_job = self.scheduler_timezone();
 
         // 创建定时任务
-        let job = Job::new_async(&cron_expr_6field, move |_uuid, _l| {
+        let job = Job::new_async_tz(&cron_expr_6field, timezone_for_job, move |_uuid, _l| {
             let db = db_for_job.clone();
             let config = config_for_job.clone();
             let pm = pm_for_job.clone();
@@ -313,6 +315,10 @@ impl SchedulerManager {
         }
     }
 
+    fn scheduler_timezone(&self) -> Tz {
+        Tz::from_str(&self.config.scheduler.timezone).unwrap_or(chrono_tz::UTC)
+    }
+
     /// 获取下次执行时间
     pub fn get_next_run_time(&self, cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>> {
         // 转换为 6 字段格式（添加秒字段）
@@ -330,8 +336,7 @@ impl SchedulerManager {
         let schedule = Schedule::from_str(&cron_expr_6field)
             .map_err(|e| anyhow::anyhow!("无效的 Cron 表达式 '{}': {}", cron_expr_6field, e))?;
 
-        let timezone_str = &self.config.scheduler.timezone;
-        let timezone = chrono_tz::Tz::from_str(timezone_str).unwrap_or(chrono_tz::UTC);
+        let timezone = self.scheduler_timezone();
 
         let _now = Utc::now().with_timezone(&timezone);
 
@@ -427,6 +432,7 @@ mod tests {
         core::{database, process::ProcessManager},
         models::Schedule,
     };
+    use chrono::Timelike;
     use std::{
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -508,6 +514,22 @@ mod tests {
             .read()
             .await
             .contains_key(&disabled_schedule.id));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn scheduler_uses_configured_timezone_for_next_run() {
+        let (mut manager, db_path) = test_scheduler("scheduler-timezone").await;
+        manager.config.scheduler.timezone = "Asia/Shanghai".to_string();
+
+        let next_run = manager
+            .get_next_run_time("25 22 * * *")
+            .expect("next run");
+        let shanghai = next_run.with_timezone(&chrono_tz::Asia::Shanghai);
+
+        assert_eq!(shanghai.hour(), 22);
+        assert_eq!(shanghai.minute(), 25);
 
         let _ = tokio::fs::remove_file(db_path).await;
     }
