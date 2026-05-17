@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls, { type ErrorData } from 'hls.js/light';
 import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
+import apiClient from '@/api/client';
 import { getStoredAuthToken } from '@/stores/authStore';
 import type { Channel } from '@/types';
 import './PlayerModal.css';
@@ -19,9 +20,23 @@ const buildApiPath = (path: string): string => {
   return path.startsWith('/') ? path : `/${path}`;
 };
 
+const resolveApiOrigin = (): string => {
+  const configuredBase = apiClient.defaults.baseURL;
+  if (typeof configuredBase === 'string' && /^https?:\/\//.test(configuredBase)) {
+    return new URL(configuredBase).origin;
+  }
+
+  const envBase = import.meta.env.VITE_API_BASE_URL;
+  if (typeof envBase === 'string' && /^https?:\/\//.test(envBase)) {
+    return new URL(envBase).origin;
+  }
+
+  return window.location.origin;
+};
+
 const buildApiUrl = (path: string): string => {
   const normalizedPath = buildApiPath(path);
-  return new URL(normalizedPath, window.location.origin).toString();
+  return new URL(normalizedPath, resolveApiOrigin()).toString();
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
