@@ -171,10 +171,13 @@ impl TranscodeService {
 
         let mut selected_process = None;
         let mut startup_failure = None;
+        // 浏览器预览优先保证“可解码”而不是“最省 CPU”。
+        // 许多 IPTV/组播源虽然能快速 remux 成 TS HLS，但编码仍可能是 MPEG-2/AC3 等，
+        // 浏览器会持续拉片却始终无法真正起播。
         let profiles = [
-            TranscodeProfile::FastRemux,
             TranscodeProfile::StableFmp4,
             TranscodeProfile::CompatibleMpegTs,
+            TranscodeProfile::FastRemux,
         ];
 
         for profile in profiles {

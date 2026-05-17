@@ -50,6 +50,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionChannelIdRef = useRef<string | null>(null);
   const hlsUrlRef = useRef<string | null>(null); // 保存转码后的 HLS URL
   const recoveryAttemptRef = useRef({ media: 0, network: 0 });
   const playAttemptRef = useRef(0);
@@ -73,6 +74,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     if (sessionIdRef.current) {
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null; // 先清除引用，防止重复调用
+      sessionChannelIdRef.current = null;
       try {
         await stopTranscode(sessionId);
         console.log('Transcode stopped:', sessionId);
@@ -246,8 +248,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     setError(null);
 
     try {
-      // 先停止之前的转码会话
-      await cleanupTranscode();
+      // 仅在切换到其他频道时停止旧会话，避免同频道的重复初始化把刚起来的预览会话停掉。
+      if (sessionIdRef.current && sessionChannelIdRef.current !== channelId) {
+        await cleanupTranscode();
+      }
       recoveryAttemptRef.current = { media: 0, network: 0 };
 
       console.log('Starting transcode for channel:', channelId);
@@ -257,6 +261,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         return;
       }
       sessionIdRef.current = result.session_id;
+      sessionChannelIdRef.current = channelId;
 
       const hlsUrl = buildApiUrl(result.playlist_url);
       hlsUrlRef.current = hlsUrl; // 保存 HLS URL 供外部播放器使用
