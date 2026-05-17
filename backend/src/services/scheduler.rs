@@ -171,6 +171,7 @@ impl SchedulerManager {
 
                 let req = ManualRecordRequest {
                     channel_id,
+                    schedule_id: Some(schedule_id.clone()),
                     duration_seconds: Some(duration_seconds),
                     output_name: Some(schedule_name.clone()),
                     output_dir,
@@ -509,5 +510,26 @@ mod tests {
             .contains_key(&disabled_schedule.id));
 
         let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[test]
+    fn scheduled_request_carries_schedule_id() {
+        let schedule = sample_schedule(true);
+        let req = ManualRecordRequest {
+            channel_id: schedule.channel_id.clone(),
+            schedule_id: Some(schedule.id.clone()),
+            duration_seconds: Some(schedule.duration_seconds),
+            output_name: Some(schedule.name.clone()),
+            output_dir: schedule.output_dir.clone(),
+            output_template: Some(schedule.output_template.clone()),
+            video_quality: schedule.video_quality.clone(),
+            audio_quality: schedule.audio_quality.clone(),
+            max_speed: schedule.max_speed.clone(),
+            thread_count: Some(schedule.thread_count),
+            transcode_mode: Some(schedule.transcode_mode.clone()),
+            transcode_preset: Some(schedule.transcode_preset.clone()),
+        };
+
+        assert_eq!(req.schedule_id.as_deref(), Some("schedule-1"));
     }
 }

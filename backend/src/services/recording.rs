@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::Utc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -27,6 +27,8 @@ struct RuntimeRecordingSettings {
     recordings_dir: PathBuf,
     default_duration_seconds: i64,
     default_thread_count: i32,
+    max_concurrent: usize,
+    min_free_space_bytes: u64,
 }
 
 impl RecordingService {
@@ -47,6 +49,7 @@ impl RecordingService {
         let task_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let runtime_settings = self.load_runtime_settings().await?;
+        self.validate_recorder_executable(&runtime_settings.recorder_executable)?;
         let duration_seconds = req
             .duration_seconds
             .filter(|duration| *duration > 0)
@@ -59,6 +62,8 @@ impl RecordingService {
 
         // 获取频道信息
         let channel = self.get_channel(&req.channel_id).await?;
+        self.validate_schedule_id(req.schedule_id.as_deref()).await?;
+        self.ensure_recording_capacity(&req, &runtime_settings).await?;
 
         // 构建输出文件路径（支持自定义目录和模板）
         let output_path = self
@@ -75,11 +80,12 @@ impl RecordingService {
         // 创建任务记录
         sqlx::query(
             r#"
-            INSERT INTO tasks (id, channel_id, status, started_at, output_path, created_at, updated_at)
-            VALUES (?, ?, 'running', ?, ?, ?, ?)
+            INSERT INTO tasks (id, schedule_id, channel_id, status, started_at, output_path, created_at, updated_at)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
             "#,
         )
         .bind(&task_id)
+        .bind(&req.schedule_id)
         .bind(&req.channel_id)
         .bind(&now)
         .bind(output_path.to_str().unwrap_or(&task_id))
@@ -87,15 +93,6 @@ impl RecordingService {
         .bind(&now)
         .execute(&self.ctx.db)
         .await?;
-
-        // 校验录制工具路径（仅当绝对路径时检查文件是否存在）
-        let exe = &runtime_settings.recorder_executable;
-        if std::path::Path::new(exe).is_absolute() && !std::path::Path::new(exe).exists() {
-            return Err(anyhow::anyhow!(
-                "录制工具未找到: {}，请在设置中配置正确路径或将其加入系统 PATH",
-                exe.display()
-            ));
-        }
 
         // 构建录制配置
         let config = RecordingConfig {
@@ -636,6 +633,23 @@ impl RecordingService {
         Ok(channel)
     }
 
+    async fn validate_schedule_id(&self, schedule_id: Option<&str>) -> Result<()> {
+        let Some(schedule_id) = schedule_id else {
+            return Ok(());
+        };
+
+        let exists: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM schedules WHERE id = ? LIMIT 1")
+                .bind(schedule_id)
+                .fetch_optional(&self.ctx.db)
+                .await?;
+        if exists.is_none() {
+            return Err(anyhow::anyhow!("关联的录制计划不存在: {}", schedule_id));
+        }
+
+        Ok(())
+    }
+
     /// 构建输出文件路径
     async fn build_output_path(
         &self,
@@ -682,8 +696,9 @@ impl RecordingService {
                     .or_else(|| filename.strip_suffix(".ts"))
                     .or_else(|| filename.strip_suffix(".mkv"))
                     .unwrap_or(filename);
+                let filename = Self::sanitize_output_filename(filename);
                 info!("使用模板生成文件名: {} -> {}", template, filename);
-                filename.to_string()
+                filename
             } else {
                 // 模板为空，使用默认
                 Self::generate_default_filename(channel)
@@ -696,8 +711,9 @@ impl RecordingService {
                 .or_else(|| name.strip_suffix(".ts"))
                 .or_else(|| name.strip_suffix(".mkv"))
                 .unwrap_or(name);
+            let name = Self::sanitize_output_filename(name);
             info!("使用自定义文件名: {}", name);
-            name.to_string()
+            name
         } else {
             // 默认模板
             Self::generate_default_filename(channel)
@@ -739,6 +755,23 @@ impl RecordingService {
         }
     }
 
+    fn sanitize_output_filename(input: &str) -> String {
+        let file_name = Path::new(input)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(input);
+        let sanitized = Self::sanitize_filename_part(file_name)
+            .trim_matches('.')
+            .trim_matches('_')
+            .to_string();
+
+        if sanitized.is_empty() {
+            "recording".to_string()
+        } else {
+            sanitized
+        }
+    }
+
     async fn load_runtime_settings(&self) -> Result<RuntimeRecordingSettings> {
         let recorder_executable = self
             .get_system_value_string(
@@ -752,6 +785,7 @@ impl RecordingService {
                 &self.ctx.config.storage.recordings_dir.to_string_lossy(),
             )
             .await?;
+        let min_free_space_gb = self.get_system_value("storage.min_free_space_gb", 0u64).await?;
 
         Ok(RuntimeRecordingSettings {
             recorder_executable: PathBuf::from(recorder_executable),
@@ -763,6 +797,12 @@ impl RecordingService {
             default_thread_count: self
                 .get_system_value("recording.thread_count", 4u32)
                 .await? as i32,
+            max_concurrent: self.ctx.config.recorder.max_concurrent.max(1),
+            min_free_space_bytes: if min_free_space_gb > 0 {
+                min_free_space_gb.saturating_mul(1024 * 1024 * 1024)
+            } else {
+                self.ctx.config.storage.min_free_space_mb * 1024 * 1024
+            },
         })
     }
 
@@ -814,10 +854,92 @@ impl RecordingService {
 
         PostProcessor::new(config, runtime_settings.recordings_dir.clone())
     }
+
+    fn validate_recorder_executable(&self, executable: &Path) -> Result<()> {
+        if executable.is_absolute() && !executable.exists() {
+            return Err(anyhow::anyhow!(
+                "录制工具未找到: {}，请在设置中配置正确路径或将其加入系统 PATH",
+                executable.display()
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_recording_capacity(
+        &self,
+        req: &ManualRecordRequest,
+        runtime_settings: &RuntimeRecordingSettings,
+    ) -> Result<()> {
+        if self.count_running_tasks().await? >= runtime_settings.max_concurrent as i64 {
+            return Err(anyhow::anyhow!(
+                "当前运行中的录制任务已达到上限 ({})",
+                runtime_settings.max_concurrent
+            ));
+        }
+
+        if self.has_running_task_for_channel(&req.channel_id).await? {
+            return Err(anyhow::anyhow!("该频道当前已有正在运行的录制任务"));
+        }
+
+        if let Some(schedule_id) = req.schedule_id.as_deref() {
+            if self.has_running_task_for_schedule(schedule_id).await? {
+                return Err(anyhow::anyhow!("该定时任务当前已有正在运行的录制任务"));
+            }
+        }
+
+        self.ensure_min_free_space(runtime_settings).await
+    }
+
+    async fn count_running_tasks(&self) -> Result<i64> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
+                .fetch_one(&self.ctx.db)
+                .await?;
+        Ok(count)
+    }
+
+    async fn has_running_task_for_channel(&self, channel_id: &str) -> Result<bool> {
+        let existing: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM tasks WHERE channel_id = ? AND status = 'running' LIMIT 1")
+                .bind(channel_id)
+                .fetch_optional(&self.ctx.db)
+                .await?;
+        Ok(existing.is_some())
+    }
+
+    async fn has_running_task_for_schedule(&self, schedule_id: &str) -> Result<bool> {
+        let existing: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM tasks WHERE schedule_id = ? AND status = 'running' LIMIT 1")
+                .bind(schedule_id)
+                .fetch_optional(&self.ctx.db)
+                .await?;
+        Ok(existing.is_some())
+    }
+
+    async fn ensure_min_free_space(
+        &self,
+        runtime_settings: &RuntimeRecordingSettings,
+    ) -> Result<()> {
+        if runtime_settings.min_free_space_bytes == 0 {
+            return Ok(());
+        }
+
+        let available = get_available_space(&runtime_settings.recordings_dir).await?;
+        if available < runtime_settings.min_free_space_bytes {
+            return Err(anyhow::anyhow!(
+                "录制目录剩余空间不足: 当前 {:.2} GB，要求至少 {:.2} GB",
+                available as f64 / 1024_f64 / 1024_f64 / 1024_f64,
+                runtime_settings.min_free_space_bytes as f64 / 1024_f64 / 1024_f64 / 1024_f64
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// 查找实际的输出文件（N_m3u8DL-RE 可能输出不同扩展名和文件名）
-/// 首先尝试按前缀匹配，如果找不到则返回目录中最新的视频文件
+/// 仅接受期望文件或同名前缀文件，避免误认领同目录下的其他录制文件。
 async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     // 首先检查期望的路径是否存在
     if tokio::fs::metadata(expected_path).await.is_ok() {
@@ -845,7 +967,7 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     };
 
     // 收集所有匹配的文件，按修改时间排序
-    let mut matching_files: Vec<(PathBuf, std::time::SystemTime, u64, bool)> = Vec::new();
+    let mut matching_files: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
     // 支持的视频扩展名
     let video_extensions = ["ts", "mp4", "mkv", "flv", "avi", "mov"];
 
@@ -892,46 +1014,55 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
                     let size = metadata.len();
                     // 只考虑非空文件
                     if size > 0 {
-                        // 标记是否匹配前缀
-                        let matches_prefix = file_name.starts_with(stem);
-                        matching_files.push((path, modified, size, matches_prefix));
+                        if file_name.starts_with(stem) {
+                            matching_files.push((path, modified, size));
+                        }
                     }
                 }
             }
         }
     }
 
-    // 优先返回匹配前缀的文件，按修改时间排序
-    let mut prefix_matches: Vec<_> = matching_files
-        .iter()
-        .filter(|(_, _, _, matches)| *matches)
-        .collect();
-    prefix_matches.sort_by(|a, b| b.1.cmp(&a.1));
-
-    if let Some((path, _, size, _)) = prefix_matches.first() {
+    matching_files.sort_by(|a, b| b.1.cmp(&a.1));
+    if let Some((path, _, size)) = matching_files.first() {
         info!(
             "找到前缀匹配的输出文件: {} (大小: {} bytes)",
             path.display(),
             size
-        );
-        return Some((*path).clone());
-    }
-
-    // 如果没有前缀匹配的，返回最新的视频文件
-    matching_files.sort_by(|a, b| b.1.cmp(&a.1));
-
-    if let Some((path, _, size, _)) = matching_files.first() {
-        info!(
-            "未找到前缀匹配，使用最新的视频文件: {} (大小: {} bytes, 共 {} 个视频文件)",
-            path.display(),
-            size,
-            matching_files.len()
         );
         return Some(path.clone());
     }
 
     warn!("未找到输出文件: 期望={}", expected_path.display());
     None
+}
+
+async fn get_available_space(path: &Path) -> Result<u64> {
+    let output = tokio::process::Command::new("df")
+        .arg("-B1")
+        .arg(path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "检查磁盘剩余空间失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("无法解析 df 输出"))?;
+    let available = line
+        .split_whitespace()
+        .nth(3)
+        .ok_or_else(|| anyhow::anyhow!("无法解析 df 可用空间字段"))?
+        .parse::<u64>()?;
+
+    Ok(available)
 }
 
 #[cfg(test)]
@@ -1044,6 +1175,40 @@ mod tests {
         (service, db_path)
     }
 
+    async fn insert_schedule(db: &sqlx::Pool<sqlx::Sqlite>, id: &str, channel_id: &str) {
+        sqlx::query(
+            r#"
+            INSERT INTO schedules (
+                id, name, channel_id, cron_expression, duration_seconds, output_template,
+                output_dir, priority, enabled, max_retry, notify_on_complete,
+                video_quality, audio_quality, max_speed, thread_count,
+                transcode_mode, transcode_preset, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind(id)
+        .bind(format!("Schedule {id}"))
+        .bind(channel_id)
+        .bind("0 0 * * *")
+        .bind(60)
+        .bind("{channel_name}_{date}_{time}.mp4")
+        .bind(Option::<String>::None)
+        .bind(5)
+        .bind(1)
+        .bind(3)
+        .bind(0)
+        .bind("best")
+        .bind("best")
+        .bind(Option::<String>::None)
+        .bind(4)
+        .bind("off")
+        .bind("medium")
+        .execute(db)
+        .await
+        .expect("insert schedule");
+    }
+
     #[tokio::test]
     async fn cancel_marks_running_task_cancelled_and_completion_writeback_stays_blocked() {
         let (service, db_path) = test_service("recording-cancel").await;
@@ -1081,6 +1246,248 @@ mod tests {
 
         let task = service.get_task("task-1").await.expect("reload task");
         assert_eq!(task.status, "cancelled");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn start_manual_with_invalid_absolute_recorder_path_does_not_create_running_task() {
+        let (service, db_path) = test_service("recording-invalid-recorder").await;
+
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'")
+            .bind("/definitely/missing/N_m3u8DL-RE")
+            .execute(&service.ctx.db)
+            .await
+            .expect("update recorder path");
+
+        let err = service
+            .start_manual(ManualRecordRequest {
+                channel_id: "channel-1".to_string(),
+                schedule_id: None,
+                duration_seconds: Some(60),
+                output_name: Some("invalid-recorder".to_string()),
+                output_dir: None,
+                output_template: None,
+                video_quality: "best".to_string(),
+                audio_quality: "best".to_string(),
+                max_speed: None,
+                thread_count: Some(1),
+                transcode_mode: Some("off".to_string()),
+                transcode_preset: Some("medium".to_string()),
+            })
+            .await
+            .expect_err("invalid recorder path should fail");
+
+        assert!(err.to_string().contains("录制工具未找到"));
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
+            .fetch_one(&service.ctx.db)
+            .await
+            .expect("count running tasks");
+        assert_eq!(count, 0);
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn build_output_path_sanitizes_custom_name() {
+        let (service, db_path) = test_service("recording-output-name").await;
+        let channel = service.get_channel("channel-1").await.expect("load channel");
+
+        let path = service
+            .build_output_path(
+                &channel,
+                "task-1",
+                &Some("../unsafe/subdir/../../video.ts".to_string()),
+                &None,
+                None,
+                Path::new("./data/recordings"),
+            )
+            .await
+            .expect("build output path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("video")
+        );
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn find_actual_output_file_does_not_pick_unrelated_latest_file() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "iptv-recorder-find-output-{}",
+            Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .expect("create temp dir");
+
+        let expected = temp_dir.join("expected_name");
+        let unrelated = temp_dir.join("someone_else.ts");
+        tokio::fs::write(&unrelated, b"video")
+            .await
+            .expect("write unrelated file");
+
+        let found = find_actual_output_file(&expected).await;
+        assert!(found.is_none());
+
+        let _ = tokio::fs::remove_file(&unrelated).await;
+        let _ = tokio::fs::remove_dir(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn start_manual_persists_schedule_id() {
+        let (service, db_path) = test_service("recording-schedule-id").await;
+        insert_schedule(&service.ctx.db, "schedule-42", "channel-1").await;
+
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'")
+            .bind("/bin/sh")
+            .execute(&service.ctx.db)
+            .await
+            .expect("update recorder path");
+        sqlx::query("UPDATE system_config SET value = ? WHERE key = 'storage.min_free_space_gb'")
+            .bind("0")
+            .execute(&service.ctx.db)
+            .await
+            .expect("disable disk guard");
+
+        let task = service
+            .start_manual(ManualRecordRequest {
+                channel_id: "channel-1".to_string(),
+                schedule_id: Some("schedule-42".to_string()),
+                duration_seconds: Some(1),
+                output_name: Some("scheduled-task".to_string()),
+                output_dir: Some(std::env::temp_dir().to_string_lossy().to_string()),
+                output_template: None,
+                video_quality: "best".to_string(),
+                audio_quality: "best".to_string(),
+                max_speed: None,
+                thread_count: Some(1),
+                transcode_mode: Some("off".to_string()),
+                transcode_preset: Some("medium".to_string()),
+            })
+            .await
+            .expect("start manual");
+
+        assert_eq!(task.schedule_id.as_deref(), Some("schedule-42"));
+
+        service.cancel(&task.id).await.expect("cancel task");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn ensure_recording_capacity_rejects_same_channel_and_schedule() {
+        let (service, db_path) = test_service("recording-capacity-channel").await;
+        insert_schedule(&service.ctx.db, "schedule-dup", "channel-1").await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, schedule_id, channel_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind("task-running")
+        .bind("schedule-dup")
+        .bind("channel-1")
+        .execute(&service.ctx.db)
+        .await
+        .expect("insert running task");
+
+        let req = ManualRecordRequest {
+            channel_id: "channel-1".to_string(),
+            schedule_id: Some("schedule-dup".to_string()),
+            duration_seconds: Some(60),
+            output_name: None,
+            output_dir: None,
+            output_template: None,
+            video_quality: "best".to_string(),
+            audio_quality: "best".to_string(),
+            max_speed: None,
+            thread_count: Some(1),
+            transcode_mode: Some("off".to_string()),
+            transcode_preset: Some("medium".to_string()),
+        };
+
+        let err = service
+            .ensure_recording_capacity(
+                &req,
+                &RuntimeRecordingSettings {
+                    recorder_executable: PathBuf::from("recorder"),
+                    recordings_dir: std::env::temp_dir(),
+                    default_duration_seconds: 60,
+                    default_thread_count: 1,
+                    max_concurrent: 10,
+                    min_free_space_bytes: 0,
+                },
+            )
+            .await
+            .expect_err("same channel should be rejected");
+        assert!(err.to_string().contains("该频道当前已有正在运行的录制任务"));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
+    async fn ensure_recording_capacity_rejects_global_concurrency_limit() {
+        let (service, db_path) = test_service("recording-capacity-limit").await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO channels (id, name, url, group_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind("channel-2")
+        .bind("测试频道2")
+        .bind("https://example.com/live2.m3u8")
+        .bind("Test")
+        .execute(&service.ctx.db)
+        .await
+        .expect("insert channel 2");
+
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES (?, ?, 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind("task-running")
+        .bind("channel-1")
+        .execute(&service.ctx.db)
+        .await
+        .expect("insert running task");
+
+        let err = service
+            .ensure_recording_capacity(
+                &ManualRecordRequest {
+                    channel_id: "channel-2".to_string(),
+                    schedule_id: None,
+                    duration_seconds: Some(60),
+                    output_name: None,
+                    output_dir: None,
+                    output_template: None,
+                    video_quality: "best".to_string(),
+                    audio_quality: "best".to_string(),
+                    max_speed: None,
+                    thread_count: Some(1),
+                    transcode_mode: Some("off".to_string()),
+                    transcode_preset: Some("medium".to_string()),
+                },
+                &RuntimeRecordingSettings {
+                    recorder_executable: PathBuf::from("recorder"),
+                    recordings_dir: std::env::temp_dir(),
+                    default_duration_seconds: 60,
+                    default_thread_count: 1,
+                    max_concurrent: 1,
+                    min_free_space_bytes: 0,
+                },
+            )
+            .await
+            .expect_err("global concurrency limit should be enforced");
+        assert!(err.to_string().contains("已达到上限"));
 
         let _ = tokio::fs::remove_file(db_path).await;
     }

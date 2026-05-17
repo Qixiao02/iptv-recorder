@@ -247,6 +247,7 @@ pub struct Task {
 #[derive(Debug, Deserialize)]
 pub struct ManualRecordRequest {
     pub channel_id: String,
+    pub schedule_id: Option<String>,
     pub duration_seconds: Option<i64>,
     pub output_name: Option<String>,
     /// 自定义输出目录，为空时使用系统默认

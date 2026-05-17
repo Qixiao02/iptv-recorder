@@ -91,6 +91,10 @@ impl CleanupService {
         if !path.exists() {
             return;
         }
+        if !path.is_file() {
+            warn!("Skip cleanup for non-file path {}", path.display());
+            return;
+        }
 
         match tokio::fs::remove_file(&path).await {
             Ok(_) => {
