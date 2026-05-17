@@ -58,6 +58,16 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const [transcoding, setTranscoding] = useState(false);
   const playbackStartedRef = useRef(false);
 
+  const requestVideoPlay = useCallback(async (video: HTMLVideoElement) => {
+    try {
+      await video.play();
+      return true;
+    } catch (e) {
+      console.warn('Video play() was deferred:', e);
+      return false;
+    }
+  }, []);
+
   // 停止转码
   const cleanupTranscode = useCallback(async () => {
     if (sessionIdRef.current) {
@@ -99,18 +109,25 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
     const bufferedEnd = video.buffered.length > 0 ? video.buffered.end(video.buffered.length - 1) : 0;
     const bufferedSeconds = Math.max(0, bufferedEnd - video.currentTime);
-    if (bufferedSeconds < minBufferedSeconds) {
+    const hasFutureData = video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+
+    if (bufferedSeconds < minBufferedSeconds && !hasFutureData) {
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        await requestVideoPlay(video);
+      }
       return;
     }
 
-    playbackStartedRef.current = true;
     setLoading(false);
     setTranscoding(false);
     setError(null);
-    await video.play().catch(() => {
+    playbackStartedRef.current = true;
+    const started = await requestVideoPlay(video);
+    if (!started) {
       playbackStartedRef.current = false;
-    });
-  }, []);
+      setLoading(true);
+    }
+  }, [requestVideoPlay]);
 
   const attachHlsErrorRecovery = useCallback((
     hls: Hls,
@@ -186,20 +203,38 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setLoading(false);
     };
 
+    const handleLoadedMetadata = () => {
+      void requestVideoPlay(video);
+    };
+
+    const handleVideoError = () => {
+      const mediaError = video.error;
+      const message = mediaError
+        ? `视频解码失败（code=${mediaError.code}）`
+        : '视频加载失败';
+      setError(message);
+      setLoading(false);
+      setTranscoding(false);
+    };
+
     video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('playing', handlePlaying);
     video.addEventListener('waiting', handleWaiting);
     video.addEventListener('stalled', handleWaiting);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('error', handleVideoError);
 
     return () => {
       video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('playing', handlePlaying);
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('stalled', handleWaiting);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('error', handleVideoError);
     };
-  }, [isOpen]);
+  }, [isOpen, requestVideoPlay]);
 
   // 播放 UDP 流（需要转码）
   const playUDPStream = useCallback(async () => {
@@ -287,12 +322,15 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           console.log('HLS manifest parsed, starting playback');
           recoveryAttemptRef.current = { media: 0, network: 0 };
+          setTranscoding(false);
+          setLoading(true);
+          void requestVideoPlay(video);
         });
         hls.on(Hls.Events.BUFFER_APPENDED, async () => {
           if (!isCurrentAttempt()) {
             return;
           }
-          await tryStartPlayback(video, 1.5);
+          await tryStartPlayback(video, 0.1);
         });
         attachHlsErrorRecovery(hls, hlsUrl, (message) => {
           if (!isCurrentAttempt()) {
@@ -307,7 +345,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = hlsUrl;
         video.addEventListener('loadedmetadata', async () => {
-          await wait(1500);
+          setTranscoding(false);
+          await wait(300);
           await tryStartPlayback(video, 0);
         });
       }
@@ -350,12 +389,13 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
           recoveryAttemptRef.current = { media: 0, network: 0 };
+          void requestVideoPlay(video);
       });
       hls.on(Hls.Events.BUFFER_APPENDED, async () => {
         if (!isCurrentAttempt()) {
           return;
         }
-        await tryStartPlayback(video, 1);
+        await tryStartPlayback(video, 0.1);
       });
       attachHlsErrorRecovery(hls, proxyUrl, (message) => {
         if (!isCurrentAttempt()) {
@@ -369,11 +409,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = proxyUrl;
       video.addEventListener('loadedmetadata', async () => {
-        await wait(1200);
+        await wait(300);
         await tryStartPlayback(video, 0);
       });
     }
-  }, [channelId, attachHlsErrorRecovery, tryStartPlayback]);
+  }, [channelId, attachHlsErrorRecovery, requestVideoPlay, tryStartPlayback]);
 
   // 播放其他流
   const playOtherStream = useCallback(() => {
