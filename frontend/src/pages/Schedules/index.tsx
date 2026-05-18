@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSchedules, deleteSchedule, toggleSchedule } from '@/api/schedules';
 import { startManualRecord } from '@/api/tasks';
 import { upsertTaskCache } from '@/lib/taskRealtime';
+import { ToastContainer, useToast } from '@/components/ConfirmDialog';
 import {
   Plus,
   CalendarClock,
@@ -73,6 +74,7 @@ const CronDescription: React.FC<{ expression: string }> = ({ expression }) => {
 export const Schedules: React.FC = () => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { toasts, showToast, removeToast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
@@ -102,9 +104,11 @@ export const Schedules: React.FC = () => {
     onSuccess: (task) => {
       upsertTaskCache(queryClient, task);
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      showToast('录制任务已创建', 'success');
       setExecutingId(null);
     },
-    onError: () => {
+    onError: (error) => {
+      showToast(`立即执行失败: ${(error as Error).message}`, 'error');
       setExecutingId(null);
     },
   });
@@ -123,6 +127,7 @@ export const Schedules: React.FC = () => {
     setExecutingId(schedule.id);
     executeMutation.mutate({
       channel_id: schedule.channel_id,
+      schedule_id: schedule.id,
       duration_seconds: schedule.duration_seconds,
       output_name: schedule.name,
       output_dir: schedule.output_dir || undefined,
@@ -149,6 +154,7 @@ export const Schedules: React.FC = () => {
 
   return (
     <div className="schedules-page">
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
       {/* Page Header */}
       <div className="page-header">
         <div className="page-title">

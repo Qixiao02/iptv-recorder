@@ -10,7 +10,7 @@ use reqwest;
 use serde::Deserialize;
 use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
-use tracing::error as tracing_error;
+use tracing::{error as tracing_error, warn};
 
 use crate::config::Config;
 use crate::core::event::EventBus;
@@ -620,6 +620,8 @@ pub async fn start_manual_record(
 ) -> Result<Json<Task>, (StatusCode, Json<ErrorResponse>)> {
     let ctx = ServiceContext::new(db.clone(), config.clone());
     let service = RecordingService::new(process_manager, ctx, Some(event_bus.sender()));
+    let channel_id = req.channel_id.clone();
+    let schedule_id = req.schedule_id.clone();
 
     match service.start_manual(req).await {
         Ok(task) => {
@@ -635,7 +637,13 @@ pub async fn start_manual_record(
             .await;
             Ok(Json(task))
         }
-        Err(e) => Err(internal_error(e)),
+        Err(e) => {
+            warn!(
+                "手动/计划立即执行录制失败: channel_id={}, schedule_id={:?}, error={}",
+                channel_id, schedule_id, e
+            );
+            Err(internal_error(e))
+        }
     }
 }
 

@@ -87,6 +87,7 @@ export interface Task {
 
 export interface ManualRecordRequest {
   channel_id: string;
+  schedule_id?: string;
   duration_seconds?: number;
   output_name?: string;
   output_dir?: string;

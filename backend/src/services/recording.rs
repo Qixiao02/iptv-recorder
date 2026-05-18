@@ -925,6 +925,9 @@ impl RecordingService {
             return Ok(());
         }
 
+        // `df` 需要目标路径已存在；首次启动时录制目录可能还未创建。
+        tokio::fs::create_dir_all(&runtime_settings.recordings_dir).await?;
+
         let available = get_available_space(&runtime_settings.recordings_dir).await?;
         if available < runtime_settings.min_free_space_bytes {
             return Err(anyhow::anyhow!(
