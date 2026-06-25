@@ -26,9 +26,20 @@ export class WebSocketClient {
 
   constructor() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = import.meta.env.VITE_API_BASE_URL
-      ? new URL(import.meta.env.VITE_API_BASE_URL).host
-      : window.location.host;
+    const getWsHost = (): string => {
+      const apiBase = import.meta.env.VITE_API_BASE_URL;
+      if (apiBase) {
+        try {
+          const url = new URL(apiBase, window.location.origin);
+          return url.host;
+        } catch (e) {
+          console.warn('VITE_API_BASE_URL 解析失败，回退到 window.location.host', e);
+          return window.location.host;
+        }
+      }
+      return window.location.host;
+    };
+    const wsHost = getWsHost();
     this.url = `${wsProtocol}//${wsHost}/ws`;
   }
 

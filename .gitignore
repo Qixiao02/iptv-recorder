@@ -45,6 +45,7 @@ Logs/
 
 # Binary tools
 *.exe
+tools/
 
 # Screenshots / test images
 *.png

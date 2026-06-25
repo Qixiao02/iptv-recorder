@@ -2,13 +2,14 @@
 
 use anyhow::{Context, Result};
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use url::Url;
 
 /// 转码会话信息
 #[allow(dead_code)]
@@ -71,6 +72,19 @@ impl TranscodeProfile {
             Self::CompatibleMpegTs => ".ts",
         }
     }
+
+    fn min_ready_segments(self) -> usize {
+        match self {
+            Self::FastRemux => 3,
+            Self::StableFmp4 => 2,
+            Self::CompatibleMpegTs => 2,
+        }
+    }
+}
+
+struct PlaylistReadyState {
+    ready: bool,
+    segment_count: usize,
 }
 
 /// 转码服务
@@ -121,6 +135,7 @@ impl TranscodeService {
         source_url: &str,
         owner_user_id: &str,
         owner_username: &str,
+        ffmpeg_path: &Path,
     ) -> Result<TranscodeSession> {
         // 同一用户重复打开同一频道时复用现有会话，避免反复拉起 FFmpeg。
         {
@@ -169,6 +184,8 @@ impl TranscodeService {
             hls_dir.display()
         );
 
+        preflight_http_stream(source_url).await?;
+
         let mut selected_process = None;
         let mut startup_failure = None;
         // 浏览器预览优先保证“可解码”而不是“最省 CPU”。
@@ -189,8 +206,14 @@ impl TranscodeService {
 
             recreate_dir(&hls_dir).context("Failed to reset HLS output directory")?;
             let stderr_tail = Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(60)));
-            let mut process =
-                spawn_ffmpeg(profile, source_url, &hls_dir, &playlist_path, &session_id)?;
+            let mut process = spawn_ffmpeg(
+                ffmpeg_path,
+                profile,
+                source_url,
+                &hls_dir,
+                &playlist_path,
+                &session_id,
+            )?;
             wire_ffmpeg_logs(&mut process, &session_id, profile, stderr_tail.clone());
 
             match wait_for_playlist_ready(
@@ -212,6 +235,12 @@ impl TranscodeService {
                     break;
                 }
                 Err(err) => {
+                    if is_source_unavailable_error(&err.to_string()) {
+                        startup_failure = Some(humanize_transcode_startup_error(&err.to_string()));
+                        terminate_process(&mut process).await;
+                        break;
+                    }
+
                     warn!(
                         "Transcode profile {} failed for channel {}: {}",
                         profile.name(),
@@ -416,12 +445,20 @@ fn recreate_dir(path: &PathBuf) -> Result<()> {
 }
 
 fn spawn_ffmpeg(
+    ffmpeg_path: &Path,
     profile: TranscodeProfile,
     source_url: &str,
     hls_dir: &PathBuf,
     playlist_path: &PathBuf,
     session_id: &str,
 ) -> Result<Child> {
+    if ffmpeg_path.is_absolute() && !ffmpeg_path.is_file() {
+        return Err(anyhow::anyhow!(
+            "FFmpeg executable not found: {}",
+            ffmpeg_path.display()
+        ));
+    }
+
     let segment_pattern = hls_dir.join(profile.segment_pattern());
     let segment_pattern = segment_pattern
         .to_str()
@@ -430,7 +467,7 @@ fn spawn_ffmpeg(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("路径含非 UTF-8 字符"))?;
 
-    let mut command = Command::new("ffmpeg");
+    let mut command = Command::new(ffmpeg_path);
     command.args([
         "-hide_banner",
         "-loglevel",
@@ -626,16 +663,56 @@ fn spawn_ffmpeg(
     }
 
     info!(
-        "Spawning FFmpeg for session {} with profile {}",
+        "Spawning FFmpeg for session {} with profile {} using {}",
         session_id,
-        profile.name()
+        profile.name(),
+        ffmpeg_path.display()
     );
 
     command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("Failed to start FFmpeg process")
+        .with_context(|| format!("Failed to start FFmpeg process: {}", ffmpeg_path.display()))
+}
+
+async fn preflight_http_stream(source_url: &str) -> Result<()> {
+    let Ok(parsed) = Url::parse(source_url) else {
+        return Ok(());
+    };
+
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Ok(());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent("Mozilla/5.0 IPTV-Recorder/1.0")
+        .build()
+        .context("创建源站预检客户端失败")?;
+
+    let response = client
+        .get(source_url)
+        .header(reqwest::header::RANGE, "bytes=0-4095")
+        .send()
+        .await
+        .with_context(|| format!("源站连接失败：{source_url}"))?;
+
+    if response.status().is_server_error() {
+        return Err(anyhow::anyhow!(
+            "源站暂不可用：HTTP {}。当前地址能连上服务器，但服务器拒绝返回直播流，请稍后重试或更换可用频道源。",
+            response.status()
+        ));
+    }
+
+    if response.status().is_client_error() {
+        return Err(anyhow::anyhow!(
+            "源地址不可播放：HTTP {}。请检查频道 URL 是否正确或是否需要鉴权。",
+            response.status()
+        ));
+    }
+
+    Ok(())
 }
 
 fn wire_ffmpeg_logs(
@@ -662,6 +739,23 @@ fn wire_ffmpeg_logs(
     }
 }
 
+fn is_source_unavailable_error(message: &str) -> bool {
+    // Broad HTTP 5xx detection from recording tool stderr:
+    //   FFmpeg:   "HTTP error 502 Bad Gateway", "HTTP error 503 Service Unavailable"
+    //   N_m3u8DL-RE: "Server returned 5XX Server Error reply"
+    message.contains("HTTP error 5")
+        || message.contains("Server returned 5")
+        || message.contains("5XX")
+}
+
+fn humanize_transcode_startup_error(message: &str) -> String {
+    if is_source_unavailable_error(message) {
+        "源站不可用：服务器返回 5XX 错误，当前频道源拒绝返回直播流。请稍后重试，或换一个可用的频道源。".to_string()
+    } else {
+        message.to_string()
+    }
+}
+
 async fn wait_for_playlist_ready(
     process: &mut Child,
     playlist_path: &PathBuf,
@@ -673,11 +767,13 @@ async fn wait_for_playlist_ready(
     let deadline = started_at + profile.startup_timeout();
 
     loop {
-        if playlist_is_ready(playlist_path) {
+        let ready_state = playlist_ready_state(playlist_path, hls_dir, profile);
+        if ready_state.ready {
             info!(
-                "HLS playlist ready with profile {}: {:?}",
+                "HLS playlist ready with profile {}: {:?}, segments={}",
                 profile.name(),
-                playlist_path
+                playlist_path,
+                ready_state.segment_count
             );
             return Ok(());
         }
@@ -710,18 +806,54 @@ async fn wait_for_playlist_ready(
     }
 }
 
+#[cfg(test)]
 fn playlist_is_ready(path: &PathBuf) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
+    playlist_ready_state(path, &PathBuf::new(), TranscodeProfile::FastRemux).ready
+}
+
+fn playlist_ready_state(
+    playlist_path: &PathBuf,
+    hls_dir: &PathBuf,
+    profile: TranscodeProfile,
+) -> PlaylistReadyState {
+    let Ok(content) = std::fs::read_to_string(playlist_path) else {
+        return PlaylistReadyState {
+            ready: false,
+            segment_count: 0,
+        };
     };
 
     if !content.contains("#EXTM3U") {
-        return false;
+        return PlaylistReadyState {
+            ready: false,
+            segment_count: 0,
+        };
     }
 
-    content.contains("#EXTINF:")
-        || content.contains("segment_")
-        || (content.contains("#EXT-X-MAP") && content.contains("init.mp4"))
+    let playlist_segments = content.matches("#EXTINF:").count();
+    let file_segments = count_hls_segments(hls_dir, profile);
+    let segment_count = playlist_segments.max(file_segments);
+    let has_segment_reference = content.contains("segment_")
+        || (content.contains("#EXT-X-MAP") && content.contains("init.mp4"));
+
+    PlaylistReadyState {
+        ready: has_segment_reference && segment_count >= profile.min_ready_segments(),
+        segment_count,
+    }
+}
+
+fn count_hls_segments(hls_dir: &PathBuf, profile: TranscodeProfile) -> usize {
+    std::fs::read_dir(hls_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(profile.segment_extension())
+        })
+        .count()
 }
 
 fn format_log_tail(stderr_tail: &Arc<std::sync::Mutex<VecDeque<String>>>) -> String {
@@ -769,17 +901,7 @@ fn collect_hls_diagnostics(
         parts.push(format!(" init_exists={init_exists}"));
     }
 
-    let segment_count = std::fs::read_dir(hls_dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(profile.segment_extension())
-        })
-        .count();
+    let segment_count = count_hls_segments(hls_dir, profile);
     parts.push(format!(" segment_count={segment_count}"));
 
     if playlist_exists && segment_count == 0 {
@@ -817,7 +939,7 @@ mod tests {
         let path = temp_playlist_path("playlist-ready");
         fs::write(
             &path,
-            "#EXTM3U\n#EXT-X-VERSION:7\n#EXTINF:4.0,\nsegment_000.ts\n",
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXTINF:2.0,\nsegment_000.ts\n#EXTINF:2.0,\nsegment_001.ts\n#EXTINF:2.0,\nsegment_002.ts\n",
         )
         .expect("write playlist");
 

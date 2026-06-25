@@ -4,6 +4,7 @@ import apiClient from './client';
 export interface TranscodeResponse {
   session_id: string;
   playlist_url: string;
+  recording_active: boolean;
 }
 
 // 启动转码
@@ -13,6 +14,8 @@ export const startTranscode = (
   return apiClient
     .post('/transcode/start', {
       channel_id: channelId,
+    }, {
+      timeout: 90000,
     })
     .then((res) => res.data);
 };

@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub struct RecordingConfig {
     /// 录制器可执行文件路径，未指定时使用进程管理器默认值
     pub recorder_executable: Option<PathBuf>,
+    pub engine: RecordingEngine,
 
     /// 频道 URL
     pub url: String,
@@ -53,6 +54,12 @@ pub struct RecordingConfig {
 
     /// 频道名称
     pub channel_name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingEngine {
+    NM3u8dlRe,
+    Ffmpeg,
 }
 
 /// 录制进程句柄
@@ -140,95 +147,117 @@ impl ProcessManager {
             .unwrap_or(&self.recorder_path);
         let mut cmd = Command::new(recorder_path);
 
-        // 基本参数
-        cmd.arg(&config.url).arg("--tmp-dir").arg(&self.temp_dir);
+        if config.engine == RecordingEngine::Ffmpeg {
+            cmd.arg("-y");
+            if let Some(ua) = &config.user_agent {
+                cmd.arg("-user_agent").arg(ua);
+            }
+            for (key, value) in &config.headers {
+                cmd.arg("-headers").arg(format!("{}: {}\r\n", key, value));
+            }
+            if let Some(duration) = config.duration_seconds {
+                cmd.arg("-t").arg(duration.to_string());
+            }
+            cmd.arg("-i").arg(&config.url);
+            cmd.arg("-c").arg("copy");
+            cmd.arg("-f").arg("mpegts");
+            cmd.arg(&config.output_path);
 
-        // 视频质量选择
-        match config.video_quality.as_str() {
-            "best" => {
-                cmd.arg("--auto-select");
-            }
-            "1080p" | "720p" | "480p" | "360p" => {
-                // 按分辨率选择
-                cmd.arg("-sv")
-                    .arg(format!("res=\"{}\"", config.video_quality));
-                cmd.arg("-sa").arg("best");
-            }
-            _ => {
-                // 自定义正则表达式
-                if !config.video_quality.is_empty() {
-                    cmd.arg("-sv").arg(&config.video_quality);
-                } else {
+            info!("FFmpeg command:");
+            info!("  URL: {}", config.url);
+            info!("  output: {}", config.output_path.display());
+            info!("  duration: {:?}s", config.duration_seconds);
+        } else {
+            // 基本参数
+            cmd.arg(&config.url).arg("--tmp-dir").arg(&self.temp_dir);
+
+            // 视频质量选择
+            match config.video_quality.as_str() {
+                "best" => {
                     cmd.arg("--auto-select");
                 }
+                "1080p" | "720p" | "480p" | "360p" => {
+                    // 按分辨率选择
+                    cmd.arg("-sv")
+                        .arg(format!("res=\"{}\"", config.video_quality));
+                    cmd.arg("-sa").arg("best");
+                }
+                _ => {
+                    // 自定义正则表达式
+                    if !config.video_quality.is_empty() {
+                        cmd.arg("-sv").arg(&config.video_quality);
+                    } else {
+                        cmd.arg("--auto-select");
+                    }
+                }
             }
-        }
 
-        // 音频质量选择
-        if config.audio_quality != "best" && !config.audio_quality.is_empty() {
-            cmd.arg("-sa").arg(&config.audio_quality);
-        }
-
-        // 设置输出目录和文件名
-        if let Some(parent) = config.output_path.parent() {
-            cmd.arg("--save-dir").arg(parent);
-            info!("N_m3u8DL-RE save-dir: {}", parent.display());
-        }
-        if let Some(stem) = config.output_path.file_stem() {
-            // 使用 --save-name 指定文件名（不带后缀）
-            cmd.arg("--save-name").arg(stem);
-            info!("N_m3u8DL-RE save-name: {}", stem.to_string_lossy());
-        }
-
-        // 设置时长（直播模式）
-        if let Some(duration) = config.duration_seconds {
-            // 转换为 HH:mm:ss 格式
-            let hours = duration / 3600;
-            let minutes = (duration % 3600) / 60;
-            let seconds = duration % 60;
-            let duration_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
-            cmd.arg("--live-record-limit").arg(&duration_str);
-        }
-
-        // 设置 User-Agent (使用 -H 参数)
-        if let Some(ua) = &config.user_agent {
-            cmd.arg("-H").arg(format!("User-Agent: {}", ua));
-        }
-
-        // 设置其他 Headers
-        for (key, value) in &config.headers {
-            cmd.arg("-H").arg(format!("{}: {}", key, value));
-        }
-
-        // 设置代理
-        if let Some(proxy) = &config.proxy {
-            cmd.arg("--custom-proxy").arg(proxy);
-        }
-
-        // 设置下载限速
-        if let Some(max_speed) = &config.max_speed {
-            if !max_speed.is_empty() {
-                cmd.arg("-R").arg(max_speed);
+            // 音频质量选择
+            if config.audio_quality != "best" && !config.audio_quality.is_empty() {
+                cmd.arg("-sa").arg(&config.audio_quality);
             }
+
+            // 设置输出目录和文件名
+            if let Some(parent) = config.output_path.parent() {
+                cmd.arg("--save-dir").arg(parent);
+                info!("N_m3u8DL-RE save-dir: {}", parent.display());
+            }
+            if let Some(stem) = config.output_path.file_stem() {
+                // 使用 --save-name 指定文件名（不带后缀）
+                cmd.arg("--save-name").arg(stem);
+                info!("N_m3u8DL-RE save-name: {}", stem.to_string_lossy());
+            }
+
+            // 设置时长（直播模式）
+            if let Some(duration) = config.duration_seconds {
+                // 转换为 HH:mm:ss 格式
+                let hours = duration / 3600;
+                let minutes = (duration % 3600) / 60;
+                let seconds = duration % 60;
+                let duration_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+                cmd.arg("--live-record-limit").arg(&duration_str);
+            }
+
+            // 设置 User-Agent (使用 -H 参数)
+            if let Some(ua) = &config.user_agent {
+                cmd.arg("-H").arg(format!("User-Agent: {}", ua));
+            }
+
+            // 设置其他 Headers
+            for (key, value) in &config.headers {
+                cmd.arg("-H").arg(format!("{}: {}", key, value));
+            }
+
+            // 设置代理
+            if let Some(proxy) = &config.proxy {
+                cmd.arg("--custom-proxy").arg(proxy);
+            }
+
+            // 设置下载限速
+            if let Some(max_speed) = &config.max_speed {
+                if !max_speed.is_empty() {
+                    cmd.arg("-R").arg(max_speed);
+                }
+            }
+
+            // 设置线程数
+            if let Some(threads) = config.threads {
+                cmd.arg("--thread-count").arg(threads.to_string());
+            }
+
+            // 设置实时日志（用于解析进度）
+            cmd.arg("--log-level").arg("INFO");
+
+            // 完成后删除临时文件
+            cmd.arg("--del-after-done");
+
+            // 打印完整命令用于调试
+            info!("N_m3u8DL-RE 完整命令:");
+            info!("  URL: {}", config.url);
+            info!("  save-dir: {:?}", config.output_path.parent());
+            info!("  save-name: {:?}", config.output_path.file_stem());
+            info!("  duration: {:?}s", config.duration_seconds);
         }
-
-        // 设置线程数
-        if let Some(threads) = config.threads {
-            cmd.arg("--thread-count").arg(threads.to_string());
-        }
-
-        // 设置实时日志（用于解析进度）
-        cmd.arg("--log-level").arg("INFO");
-
-        // 完成后删除临时文件
-        cmd.arg("--del-after-done");
-
-        // 打印完整命令用于调试
-        info!("N_m3u8DL-RE 完整命令:");
-        info!("  URL: {}", config.url);
-        info!("  save-dir: {:?}", config.output_path.parent());
-        info!("  save-name: {:?}", config.output_path.file_stem());
-        info!("  duration: {:?}s", config.duration_seconds);
 
         debug!("启动命令: {:?}", cmd);
 
@@ -237,9 +266,14 @@ impl ProcessManager {
         let (status_tx, status_rx) = watch::channel(ProcessStatus::Starting);
 
         // 启动进程
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| anyhow!("启动录制进程失败: {}", e))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            anyhow!(
+                "failed to start {:?} recorder ({}): {}",
+                config.engine,
+                recorder_path.display(),
+                e
+            )
+        })?;
 
         let process_id = id;
         let task_id_clone = task_id.clone();
@@ -304,7 +338,9 @@ impl ProcessManager {
                             "⚠️ 录制进程异常退出: task_id={}, code={:?}",
                             task_id_clone, exit_code
                         );
-                        let _ = status_tx.send(ProcessStatus::Completed { exit_code });
+                        let _ = status_tx.send(ProcessStatus::Failed {
+                            error: format!("录制进程异常退出，退出码: {:?}", exit_code),
+                        });
                     }
                 }
                 Err(e) => {
@@ -428,6 +464,7 @@ mod tests {
     fn test_recording_config() {
         let config = RecordingConfig {
             recorder_executable: None,
+            engine: RecordingEngine::NM3u8dlRe,
             url: "https://example.com/stream.m3u8".to_string(),
             output_path: PathBuf::from("/tmp/test.mp4"),
             duration_seconds: Some(60),

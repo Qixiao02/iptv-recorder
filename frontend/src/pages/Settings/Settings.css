@@ -2,11 +2,15 @@
   animation: fade-in 0.4s ease-out;
 }
 
+.settings-page .page-header {
+  padding-top: 4px;
+}
+
 /* Settings Layout */
 .settings-layout {
   display: grid;
   grid-template-columns: 220px 1fr;
-  gap: 16px;
+  gap: 20px;
 }
 
 /* Settings Navigation */
@@ -152,6 +156,100 @@
 
 .input-with-btn input {
   flex: 1;
+}
+
+.directory-picker-modal {
+  max-width: 640px;
+}
+
+.directory-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.directory-current-path {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  min-width: 0;
+}
+
+.directory-current-path span {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.directory-current-path code {
+  color: var(--text-primary);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.directory-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.directory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.directory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.directory-row:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-panel);
+}
+
+.directory-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-loading,
+.directory-empty,
+.directory-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.directory-loading,
+.directory-empty {
+  color: var(--text-tertiary);
+  border: 1px dashed var(--border-default);
+}
+
+.directory-error {
+  color: var(--color-error);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.24);
 }
 
 /* Toggle Switch */

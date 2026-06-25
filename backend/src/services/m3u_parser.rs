@@ -209,22 +209,27 @@ impl M3UParser {
                     line.to_string()
                 };
 
-                // 验证 URL
-                if !url.is_empty()
-                    && (url.starts_with("http://")
-                        || url.starts_with("https://")
-                        || url.starts_with("/"))
-                {
-                    let channel = Self::build_channel(
-                        current_name
-                            .clone()
-                            .unwrap_or_else(|| "Unknown".to_string()),
-                        url,
-                        &current_attrs,
-                    );
+                // 严格校验 URL scheme：仅接受 http/https，拒绝 file://、本地绝对路径等，
+                // 防止 SSRF —— 不允许把本地文件路径当 channel URL 注入后被 FFmpeg 读取。
+                if !url.is_empty() {
+                    match url::Url::parse(&url) {
+                        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+                            let channel = Self::build_channel(
+                                current_name
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown".to_string()),
+                                url,
+                                &current_attrs,
+                            );
 
-                    result.channels.push(channel);
-                    result.successful += 1;
+                            result.channels.push(channel);
+                            result.successful += 1;
+                        }
+                        _ => {
+                            result.failed += 1;
+                            result.errors.push(format!("不支持的 URL scheme: {}", url));
+                        }
+                    }
                 } else {
                     result.failed += 1;
                     result.errors.push(format!("无效的 URL: {}", url));
@@ -338,5 +343,68 @@ http://example.com/cctv1.m3u8
             "http://example.com/logo.png"
         );
         assert_eq!(result.channels[0].group, "央视");
+    }
+
+    /// 本地绝对路径（如 `/etc/passwd`）必须被拒绝，防止被 FFmpeg 当 file:// 读取（SSRF）。
+    #[test]
+    fn rejects_local_path() {
+        let content = r#"#EXTM3U
+#EXTINF:-1,Evil
+/etc/passwd
+"#;
+
+        let result = M3UParser::parse(content).unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.successful, 0);
+        assert_eq!(result.failed, 1);
+        assert!(result.channels.is_empty());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("不支持的 URL scheme") && e.contains("/etc/passwd")),
+            "errors: {:?}",
+            result.errors
+        );
+    }
+
+    /// `file://` scheme 必须被拒绝。
+    #[test]
+    fn rejects_file_scheme() {
+        let content = r#"#EXTM3U
+#EXTINF:-1,Evil
+file:///etc/shadow
+"#;
+
+        let result = M3UParser::parse(content).unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.successful, 0);
+        assert_eq!(result.failed, 1);
+        assert!(result.channels.is_empty());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("不支持的 URL scheme") && e.contains("file:///etc/shadow")),
+            "errors: {:?}",
+            result.errors
+        );
+    }
+
+    /// 正常 `https://` URL 必须被接受。
+    #[test]
+    fn accepts_https() {
+        let content = r#"#EXTM3U
+#EXTINF:-1,Valid
+https://example.com/playlist.m3u8
+"#;
+
+        let result = M3UParser::parse(content).unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.successful, 1);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.channels.len(), 1);
+        assert_eq!(result.channels[0].name, "Valid");
+        assert_eq!(result.channels[0].url, "https://example.com/playlist.m3u8");
     }
 }

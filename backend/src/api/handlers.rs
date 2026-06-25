@@ -7,8 +7,9 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use reqwest;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error as tracing_error, warn};
 
@@ -21,9 +22,9 @@ use crate::models::{
 };
 use crate::services::{
     AuditService, AuthService, ChannelService, ChannelTestResult, Claims, CleanupService,
-    ConfigService, ConfigUpdateRequest, CronTrigger, EpgService, ImportChannelResult,
-    ImportEpgRequest, M3UParser, PaginationParams, RecordingService, ScheduleService,
-    SchedulerManager, ServiceContext, UpcomingTask,
+    ConfigService, ConfigUpdateRequest, CronTrigger, EpgService, ImportEpgRequest, M3UParser,
+    PaginationParams, RecordingService, ScheduleService, SchedulerManager, ServiceContext,
+    UpcomingTask,
 };
 
 /// 应用状态
@@ -85,6 +86,16 @@ pub async fn index_handler() -> &'static str {
 }
 
 // ===== 频道处理器 =====
+
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteChannelsRequest {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteChannelsResponse {
+    pub deleted: u64,
+}
 
 pub async fn list_channels(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
@@ -186,6 +197,43 @@ pub async fn delete_channel(
             )
             .await;
             Ok(StatusCode::NO_CONTENT)
+        }
+        Err(e) => Err(internal_error(e)),
+    }
+}
+
+pub async fn batch_delete_channels(
+    Extension(claims): Extension<Claims>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Json(req): Json<BatchDeleteChannelsRequest>,
+) -> Result<Json<BatchDeleteChannelsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let ids: Vec<String> = req
+        .ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    if ids.is_empty() {
+        return Ok(Json(BatchDeleteChannelsResponse { deleted: 0 }));
+    }
+
+    let ctx = ServiceContext::new(db.clone(), config.clone());
+    let service = ChannelService::new(ctx);
+
+    match service.delete_many(&ids).await {
+        Ok(deleted) => {
+            record_audit(
+                db,
+                config,
+                Some(&claims),
+                "channel.batch_delete",
+                "channel",
+                None,
+                Some(format!("requested={}, deleted={}", ids.len(), deleted)),
+            )
+            .await;
+            Ok(Json(BatchDeleteChannelsResponse { deleted }))
         }
         Err(e) => Err(internal_error(e)),
     }
@@ -310,38 +358,30 @@ async fn import_channels(
     let ctx = ServiceContext::new(db, config);
     let service = ChannelService::new(ctx);
 
-    let mut imported = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
     let mut errors = parse_result.errors.clone();
-
-    for channel in parse_result.channels {
-        let create_req = CreateChannelRequest {
-            name: channel.name.clone(),
-            url: channel.url.clone(),
-            group_name: channel.group.clone(),
-            logo_url: channel.logo.clone(),
+    let requests = parse_result
+        .channels
+        .into_iter()
+        .map(|channel| CreateChannelRequest {
+            name: channel.name,
+            url: channel.url,
+            group_name: channel.group,
+            logo_url: channel.logo,
             source_visibility: "public".to_string(),
             playback_strategy: "auto".to_string(),
-        };
+        })
+        .collect();
 
-        match service.import_channel(create_req, overwrite).await {
-            Ok(ImportChannelResult::Created) | Ok(ImportChannelResult::Updated) => imported += 1,
-            Ok(ImportChannelResult::Skipped) => {
-                skipped += 1;
-                errors.push(format!("频道 {} 已存在，已跳过", channel.name));
-            }
-            Err(e) => {
-                failed += 1;
-                errors.push(format!("频道 {} 导入失败: {}", channel.name, e));
-            }
-        }
-    }
+    let result = service
+        .import_channels_batch(requests, overwrite)
+        .await
+        .map_err(internal_error)?;
+    errors.extend(result.errors);
 
     Ok(Json(ImportM3UResponse {
-        imported,
-        skipped,
-        failed,
+        imported: result.imported,
+        skipped: result.skipped,
+        failed: result.failed,
         errors,
     }))
 }
@@ -729,6 +769,122 @@ pub async fn update_config(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DirectoryListQuery {
+    path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirectoryEntry {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirectoryListResponse {
+    current_path: String,
+    parent_path: Option<String>,
+    entries: Vec<DirectoryEntry>,
+}
+
+pub async fn list_server_directories(
+    Query(query): Query<DirectoryListQuery>,
+) -> Result<Json<DirectoryListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let target = resolve_directory_query(query.path.as_deref()).map_err(bad_request_error)?;
+
+    if cfg!(windows) && query.path.as_deref().unwrap_or("").trim().is_empty() {
+        return Ok(Json(DirectoryListResponse {
+            current_path: String::new(),
+            parent_path: None,
+            entries: list_windows_drives(),
+        }));
+    }
+
+    let metadata = std::fs::metadata(&target).map_err(|e| {
+        internal_error(anyhow::anyhow!(
+            "无法读取服务器目录 {}: {}",
+            target.display(),
+            e
+        ))
+    })?;
+    if !metadata.is_dir() {
+        return Err(bad_request_error(anyhow::anyhow!(
+            "路径不是服务器目录: {}",
+            target.display()
+        )));
+    }
+
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(&target).map_err(|e| {
+        internal_error(anyhow::anyhow!(
+            "无法列出服务器目录 {}: {}",
+            target.display(),
+            e
+        ))
+    })?;
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            entries.push(DirectoryEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: path.to_string_lossy().to_string(),
+            });
+        }
+    }
+
+    entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
+    let current_path = target.to_string_lossy().to_string();
+    let parent_path = target
+        .parent()
+        .map(|path| path.to_string_lossy().to_string());
+
+    Ok(Json(DirectoryListResponse {
+        current_path,
+        parent_path,
+        entries,
+    }))
+}
+
+fn resolve_directory_query(path: Option<&str>) -> Result<PathBuf, anyhow::Error> {
+    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return std::env::current_dir().map_err(Into::into);
+    };
+
+    let candidate = PathBuf::from(path);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        std::env::current_dir()?.join(candidate)
+    };
+
+    Ok(resolved)
+}
+
+fn list_windows_drives() -> Vec<DirectoryEntry> {
+    #[cfg(windows)]
+    {
+        ('A'..='Z')
+            .filter_map(|letter| {
+                let path = format!("{}:\\", letter);
+                if std::path::Path::new(&path).is_dir() {
+                    Some(DirectoryEntry {
+                        name: path.clone(),
+                        path,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 pub async fn get_system_health(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
 ) -> Result<Json<SystemHealth>, (StatusCode, Json<ErrorResponse>)> {
@@ -877,6 +1033,16 @@ fn not_found_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
         StatusCode::NOT_FOUND,
         Json(ErrorResponse {
             error: "not_found".to_string(),
+            details: Some(err.to_string()),
+        }),
+    )
+}
+
+fn bad_request_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "bad_request".to_string(),
             details: Some(err.to_string()),
         }),
     )
@@ -1140,6 +1306,8 @@ pub struct TranscodeResponse {
     pub session_id: String,
     /// HLS 播放列表 URL
     pub playlist_url: String,
+    /// 同频道是否正在录制
+    pub recording_active: bool,
 }
 
 /// 启动转码
@@ -1166,8 +1334,31 @@ pub async fn start_transcode(
         ));
     }
 
+    let default_ffmpeg_path = if config.recorder.post_process.ffmpeg_path.is_empty() {
+        "ffmpeg".to_string()
+    } else {
+        config.recorder.post_process.ffmpeg_path.clone()
+    };
+    let ffmpeg_path: String = sqlx::query_scalar("SELECT value FROM system_config WHERE key = ?")
+        .bind("recorder.post_process.ffmpeg_path")
+        .fetch_optional(&db)
+        .await
+        .map_err(|e| internal_error(anyhow::anyhow!("读取 FFmpeg 配置失败: {}", e)))?
+        .filter(|value: &String| !value.trim().is_empty())
+        .unwrap_or(default_ffmpeg_path);
+    let ffmpeg_path = resolve_ffmpeg_executable(&ffmpeg_path);
+    let recording_active = is_channel_recording(&db, &channel.id)
+        .await
+        .map_err(|e| internal_error(anyhow::anyhow!("读取录制状态失败: {}", e)))?;
+
     let session = transcode_service
-        .start_transcode(&req.channel_id, &channel.url, &claims.sub, &claims.username)
+        .start_transcode(
+            &req.channel_id,
+            &channel.url,
+            &claims.sub,
+            &claims.username,
+            &ffmpeg_path,
+        )
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("启动转码失败: {}", e)))?;
 
@@ -1179,8 +1370,8 @@ pub async fn start_transcode(
         "channel",
         Some(&channel.id),
         Some(format!(
-            "session_id={}, visibility={}, strategy={}",
-            session.id, channel.source_visibility, channel.playback_strategy
+            "session_id={}, visibility={}, strategy={}, recording_active={}",
+            session.id, channel.source_visibility, channel.playback_strategy, recording_active
         )),
     )
     .await;
@@ -1188,7 +1379,42 @@ pub async fn start_transcode(
     Ok(Json(TranscodeResponse {
         session_id: session.id.clone(),
         playlist_url: format!("/api/transcode/hls/{}/stream.m3u8", session.id),
+        recording_active,
     }))
+}
+
+async fn is_channel_recording(db: &Pool<Sqlite>, channel_id: &str) -> Result<bool, sqlx::Error> {
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM tasks WHERE channel_id = ? AND status = 'running' LIMIT 1")
+            .bind(channel_id)
+            .fetch_optional(db)
+            .await?;
+
+    Ok(existing.is_some())
+}
+
+fn resolve_ffmpeg_executable(configured_path: &str) -> PathBuf {
+    let configured_path = configured_path.trim();
+    if configured_path.is_empty() {
+        return PathBuf::from("ffmpeg");
+    }
+
+    let path = PathBuf::from(configured_path);
+    if path.is_absolute() && !path.is_file() && command_exists("ffmpeg") {
+        warn!(
+            "Configured FFmpeg path does not exist in this runtime: {}. Falling back to ffmpeg from PATH.",
+            path.display()
+        );
+        return PathBuf::from("ffmpeg");
+    }
+
+    path
+}
+
+fn command_exists(command: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).is_file()))
+        .unwrap_or(false)
 }
 
 /// 停止转码

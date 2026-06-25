@@ -1,0 +1,29 @@
+export default {
+  menu: {
+    dashboard: '仪表盘',
+    channels: '频道管理',
+    schedules: '录制计划',
+    tasks: '录制任务',
+    settings: '系统设置',
+  },
+  theme: {
+    switchToLight: '切换到亮色模式',
+    switchToDark: '切换到暗色模式',
+  },
+  alerts: {
+    title: '系统告警',
+    markAllRead: '全部已读',
+    empty: '暂无系统告警',
+    levels: {
+      info: '信息',
+      warning: '警告',
+      error: '错误',
+      critical: '严重',
+    },
+  },
+  language: {
+    label: '语言',
+    short: '中',
+  },
+};
+

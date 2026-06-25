@@ -4,6 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask, clearCompletedTasks, deleteTask } from '@/api/tasks';
 import { getAllChannels } from '@/api/channels';
 import { wsClient, type ConnectionState } from '@/api/websocket';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { formatBytes, formatShortDateTime } from '@/i18n/format';
+import type { AppLanguage } from '@/i18n/types';
 import {
   Clapperboard,
   CircleDot,
@@ -19,6 +22,7 @@ import {
   Radio,
 } from 'lucide-react';
 import type { TaskStatus } from '@/types';
+import type { Task, TaskProgressData, TaskUpdateData } from '@/types';
 import './Tasks.css';
 
 const TaskDetailModal = lazy(() => import('@/components/TaskDetailModal'));
@@ -26,19 +30,21 @@ const ConfirmDialog = lazy(() => import('@/components/ConfirmDialog'));
 
 type FilterStatus = 'all' | TaskStatus;
 
-const statusConfig: Record<TaskStatus, { label: string; icon: React.ReactNode; color: string }> = {
-  pending: { label: '等待中', icon: <Clock size={14} />, color: 'neutral' },
-  running: { label: '录制中', icon: <CircleDot size={14} />, color: 'recording' },
-  completed: { label: '已完成', icon: <CheckCircle2 size={14} />, color: 'success' },
-  failed: { label: '失败', icon: <XCircle size={14} />, color: 'error' },
-  cancelled: { label: '已取消', icon: <XCircle size={14} />, color: 'neutral' },
+const statusMeta: Record<TaskStatus, { icon: React.ReactNode; color: string }> = {
+  pending: { icon: <Clock size={14} />, color: 'neutral' },
+  running: { icon: <CircleDot size={14} />, color: 'recording' },
+  completed: { icon: <CheckCircle2 size={14} />, color: 'success' },
+  failed: { icon: <XCircle size={14} />, color: 'error' },
+  cancelled: { icon: <XCircle size={14} />, color: 'neutral' },
 };
 
 export const Tasks: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation(['tasks', 'common']);
+  const isI18nReady = useI18nNamespace(['tasks', 'common']);
   const queryClient = useQueryClient();
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [liveProgress, setLiveProgress] = useState<Map<string, { percent: number; speed: string; downloaded: number }>>(new Map());
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; taskId: string | null }>({
     isOpen: false,
     taskId: null,
@@ -51,6 +57,11 @@ export const Tasks: React.FC = () => {
   const { data: tasks, isLoading, refetch } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
+    refetchInterval: (query) => {
+      const currentTasks = query.state.data as Task[] | undefined;
+      return currentTasks?.some((task) => task.status === 'running') ? 3000 : false;
+    },
+    refetchIntervalInBackground: true,
   });
 
   const { data: channels } = useQuery({
@@ -60,11 +71,58 @@ export const Tasks: React.FC = () => {
 
   useEffect(() => wsClient.onConnectionStateChange(setConnectionState), []);
 
-  // 创建 channel_id -> channel_name 映射
+  useEffect(() => {
+    wsClient.connect();
+
+    const patchTask = (taskId: string, patch: Partial<Task>) => {
+      queryClient.setQueryData<Task[]>(['tasks'], (oldTasks) => {
+        if (!oldTasks) return oldTasks;
+        return oldTasks.map((task) => (
+          task.id === taskId
+            ? { ...task, ...patch, updated_at: patch.updated_at ?? new Date().toISOString() }
+            : task
+        ));
+      });
+    };
+
+    const unsubscribeProgress = wsClient.onTaskProgress((data: TaskProgressData) => {
+      setLiveProgress((prev) => {
+        const next = new Map(prev);
+        next.set(data.task_id, { percent: data.percent, speed: data.speed, downloaded: data.downloaded_bytes });
+        return next;
+      });
+      patchTask(data.task_id, {
+        progress_percent: data.percent,
+        file_size: data.downloaded_bytes,
+        current_speed: data.speed,
+      });
+    });
+
+    const unsubscribeUpdate = wsClient.onTaskUpdate((data: TaskUpdateData) => {
+      setLiveProgress((prev) => {
+        const next = new Map(prev);
+        next.delete(data.task_id);
+        return next;
+      });
+      patchTask(data.task_id, {
+        status: data.status,
+        error_message: data.error_message,
+        ...(data.status === 'completed' ? { progress_percent: 100 } : {}),
+        ...(data.status === 'running' ? {} : { current_speed: null }),
+      });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    });
+
+    return () => {
+      unsubscribeProgress();
+      unsubscribeUpdate();
+    };
+  }, [queryClient]);
+
   const channelMap = useMemo(() => {
     const map = new Map<string, string>();
-    channels?.forEach((ch) => {
-      map.set(ch.id, ch.name);
+    channels?.forEach((channel) => {
+      map.set(channel.id, channel.name);
     });
     return map;
   }, [channels]);
@@ -97,14 +155,29 @@ export const Tasks: React.FC = () => {
     },
   });
 
-  const filteredTasks = tasks?.filter((task) => {
+  // Merge live progress into tasks for real-time updates
+  const tasksWithLiveProgress = useMemo(() => {
+    if (!tasks) return undefined;
+    if (liveProgress.size === 0) return tasks;
+    return tasks.map((task) => {
+      const live = liveProgress.get(task.id);
+      if (!live) return task;
+      return { ...task, progress_percent: live.percent, current_speed: live.speed, file_size: live.downloaded };
+    });
+  }, [tasks, liveProgress]);
+
+  const filteredTasks = tasksWithLiveProgress?.filter((task) => {
     if (filterStatus === 'all') return true;
     return task.status === filterStatus;
   });
 
-  const runningCount = tasks?.filter((t) => t.status === 'running').length || 0;
-  const completedCount = tasks?.filter((t) => t.status === 'completed').length || 0;
-  const failedCount = tasks?.filter((t) => t.status === 'failed').length || 0;
+  const runningCount = tasksWithLiveProgress?.filter((task) => task.status === 'running').length || 0;
+  const completedCount = tasksWithLiveProgress?.filter((task) => task.status === 'completed').length || 0;
+  const failedCount = tasksWithLiveProgress?.filter((task) => task.status === 'failed').length || 0;
+
+  const statusLabel = (status: TaskStatus) => t(`common:taskStatus.${status}`);
+  const getChannelName = (channelId: string) =>
+    channelMap.get(channelId) || t('common:channelFallback', { id: channelId.slice(0, 8) });
 
   const formatDuration = (seconds: number) => {
     if (!seconds) return '-';
@@ -115,34 +188,22 @@ export const Tasks: React.FC = () => {
     return `${minutes}:${String(secs).padStart(2, '0')}`;
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (!bytes) return '-';
-    if (bytes >= 1024 * 1024 * 1024) {
-      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-    }
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  };
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   const shouldRenderTaskDetail = selectedTask !== null;
   const shouldRenderDeleteConfirm = deleteConfirm.isOpen;
   const shouldRenderClearConfirm = clearConfirm;
   const isLive = connectionState === 'connected';
-  const liveLabel = {
-    idle: '未连接',
-    connecting: '正在连接实时通道',
-    connected: '实时同步中',
-    reconnecting: '重连实时通道中',
-    unauthorized: '实时认证失效',
-    disconnected: '实时连接已断开',
-  }[connectionState];
+  const liveLabel = t(`tasks:live.${connectionState}`);
 
   return (
     <div className="tasks-page">
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title">
-          <h1>{t('menu.tasks')}</h1>
-          <p className="page-subtitle">录制任务执行历史</p>
+          <h1>{t('tasks:title')}</h1>
+          <p className="page-subtitle">{t('tasks:subtitle')}</p>
         </div>
         <div className="page-actions">
           <div className={`live-pill ${isLive ? 'connected' : 'offline'}`}>
@@ -153,77 +214,77 @@ export const Tasks: React.FC = () => {
             className="btn btn-ghost"
             onClick={() => setClearConfirm(true)}
             disabled={clearMutation.isPending}
-            title="清除已完成/失败/取消的任务记录"
+            title={t('tasks:clearTooltip')}
           >
             <Trash2 size={16} />
-            清除记录
+            {t('tasks:clearRecords')}
           </button>
           <button className="btn btn-ghost" onClick={() => refetch()}>
             <RefreshCw size={16} />
-            刷新
+            {t('common:refresh')}
           </button>
         </div>
       </div>
 
-      {/* Stats Bar */}
       <div className="stats-bar">
         <div className="stat-item">
           <div className="stat-number recording">{runningCount}</div>
-          <div className="stat-label">录制中</div>
+          <div className="stat-label">{t('tasks:running')}</div>
         </div>
         <div className="stat-item">
           <div className="stat-number success">{completedCount}</div>
-          <div className="stat-label">已完成</div>
+          <div className="stat-label">{t('tasks:completed')}</div>
         </div>
         <div className="stat-item">
           <div className="stat-number error">{failedCount}</div>
-          <div className="stat-label">失败</div>
+          <div className="stat-label">{t('tasks:failed')}</div>
         </div>
       </div>
 
-      {/* Filter Tabs */}
       <div className="filter-tabs">
         <button
           className={`tab-btn ${filterStatus === 'all' ? 'active' : ''}`}
           onClick={() => setFilterStatus('all')}
         >
-          全部
+          {t('tasks:all')}
         </button>
-        {Object.entries(statusConfig).map(([status, config]) => (
+        {Object.entries(statusMeta).map(([status, meta]) => (
           <button
             key={status}
             className={`tab-btn ${filterStatus === status ? 'active' : ''}`}
             onClick={() => setFilterStatus(status as TaskStatus)}
           >
-            {config.icon}
-            {config.label}
+            {meta.icon}
+            {statusLabel(status as TaskStatus)}
           </button>
         ))}
       </div>
 
-      {/* Tasks List */}
       {isLoading ? (
         <div className="loading-list">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="task-skeleton card animate-shimmer" />
+          {[1, 2, 3, 4, 5].map((item) => (
+            <div key={item} className="task-skeleton card animate-shimmer" />
           ))}
         </div>
       ) : filteredTasks && filteredTasks.length > 0 ? (
         <div className="tasks-list">
-          {filteredTasks.map((task, idx) => {
-            const config = statusConfig[task.status];
+          {filteredTasks.map((task, index) => {
+            const meta = statusMeta[task.status];
             const isRunning = task.status === 'running';
-            const channelName = channelMap.get(task.channel_id) || `频道 ${task.channel_id.slice(0, 8)}...`;
+            const channelName = getChannelName(task.channel_id);
+            const live = liveProgress.get(task.id);
+            const displayProgress = isRunning && live ? live.percent : task.progress_percent;
+            const displaySpeed = isRunning && live ? live.speed : task.current_speed;
 
             return (
               <div
                 key={task.id}
                 className={`task-card card stagger-item ${isRunning ? 'recording' : ''}`}
-                style={{ animationDelay: `${idx * 0.03}s` }}
+                style={{ animationDelay: `${index * 0.03}s` }}
               >
                 <div className="task-left">
-                  <div className={`task-status-indicator ${config.color}`}>
-                    {config.icon}
+                  <div className={`task-status-indicator ${meta.color}`}>
+                    {meta.icon}
                   </div>
 
                   <div className="task-info">
@@ -231,20 +292,15 @@ export const Tasks: React.FC = () => {
                       {channelName}
                     </div>
                     <div className="task-meta">
-                      <span className={`badge badge-${config.color}`}>
-                        {config.label}
+                      <span className={`badge badge-${meta.color}`}>
+                        {statusLabel(task.status)}
                       </span>
-                      {isRunning && task.current_speed && (
-                        <span className="speed-indicator">{task.current_speed}</span>
+                      {isRunning && displaySpeed && (
+                        <span className="speed-indicator">{displaySpeed}</span>
                       )}
                       {task.started_at && (
                         <span className="task-time">
-                          {new Date(task.started_at).toLocaleString('zh-CN', {
-                            month: 'numeric',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatShortDateTime(task.started_at, i18n.language as AppLanguage)}
                         </span>
                       )}
                     </div>
@@ -257,20 +313,20 @@ export const Tasks: React.FC = () => {
                       <div className="progress-bar progress-bar-recording">
                         <div
                           className="progress-bar-fill"
-                          style={{ width: `${task.progress_percent}%` }}
+                          style={{ width: `${displayProgress}%` }}
                         />
                       </div>
-                      <span className="progress-percent">{task.progress_percent}%</span>
+                      <span className="progress-percent">{Math.round(displayProgress)}%</span>
                     </div>
                   ) : (
                     <div className="task-stats">
                       <div className="stat">
                         <span className="stat-value">{formatDuration(task.duration_recorded)}</span>
-                        <span className="stat-label">时长</span>
+                        <span className="stat-label">{t('tasks:duration')}</span>
                       </div>
                       <div className="stat">
-                        <span className="stat-value">{formatFileSize(task.file_size)}</span>
-                        <span className="stat-label">大小</span>
+                        <span className="stat-value">{task.file_size ? formatBytes(task.file_size, i18n.language as AppLanguage) : '-'}</span>
+                        <span className="stat-label">{t('tasks:size')}</span>
                       </div>
                     </div>
                   )}
@@ -283,7 +339,7 @@ export const Tasks: React.FC = () => {
                       onClick={() => cancelMutation.mutate(task.id)}
                     >
                       <StopCircle size={14} />
-                      停止
+                      {t('tasks:stop')}
                     </button>
                   ) : (
                     <>
@@ -293,7 +349,7 @@ export const Tasks: React.FC = () => {
                           onClick={() => setSelectedTaskId(task.id)}
                         >
                           <Eye size={14} />
-                          查看
+                          {t('tasks:view')}
                         </button>
                       )}
                       {task.status === 'failed' && task.error_message && (
@@ -308,7 +364,7 @@ export const Tasks: React.FC = () => {
                       <button
                         className="btn btn-ghost btn-sm btn-delete"
                         onClick={() => setDeleteConfirm({ isOpen: true, taskId: task.id })}
-                        title="删除记录"
+                        title={t('tasks:deleteRecord')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -330,11 +386,11 @@ export const Tasks: React.FC = () => {
           <div className="empty-icon">
             <Clapperboard size={48} strokeWidth={1} />
           </div>
-          <div className="empty-title">没有任务记录</div>
+          <div className="empty-title">{t('tasks:emptyTitle')}</div>
           <div className="empty-desc">
             {filterStatus === 'all'
-              ? '开始录制后会在这里显示任务'
-              : `没有${statusConfig[filterStatus as TaskStatus]?.label || ''}的任务`}
+              ? t('tasks:emptyAll')
+              : t('tasks:emptyFiltered', { status: statusLabel(filterStatus as TaskStatus) })}
           </div>
         </div>
       )}
@@ -354,9 +410,9 @@ export const Tasks: React.FC = () => {
             isOpen={deleteConfirm.isOpen}
             onClose={() => setDeleteConfirm({ isOpen: false, taskId: null })}
             onConfirm={() => deleteConfirm.taskId && deleteMutation.mutate(deleteConfirm.taskId)}
-            title="删除任务记录"
-            message="确定要删除此任务记录吗？此操作无法撤销。"
-            confirmText="删除"
+            title={t('tasks:deleteRecordTitle')}
+            message={t('tasks:deleteRecordMessage')}
+            confirmText={t('common:delete')}
             type="danger"
             isLoading={deleteMutation.isPending}
           />
@@ -367,9 +423,9 @@ export const Tasks: React.FC = () => {
             isOpen={clearConfirm}
             onClose={() => setClearConfirm(false)}
             onConfirm={() => clearMutation.mutate()}
-            title="清除任务记录"
-            message="确定要清除所有已完成、失败和取消的任务记录吗？此操作无法撤销。"
-            confirmText="清除"
+            title={t('tasks:clearRecordsTitle')}
+            message={t('tasks:clearRecordsMessage')}
+            confirmText={t('common:clear')}
             type="warning"
             isLoading={clearMutation.isPending}
           />

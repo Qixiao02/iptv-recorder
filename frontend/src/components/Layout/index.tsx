@@ -4,6 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { useSettingStore } from '@/stores/settingStore';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { formatShortDateTime } from '@/i18n/format';
+import type { AppLanguage } from '@/i18n/types';
 import {
   LayoutDashboard,
   Tv,
@@ -25,17 +29,18 @@ import {
 import './Layout.css';
 
 const navItems = [
-  { key: '/dashboard', icon: LayoutDashboard, label: 'menu.dashboard' },
-  { key: '/channels', icon: Tv, label: 'menu.channels' },
-  { key: '/schedules', icon: CalendarClock, label: 'menu.schedules' },
-  { key: '/tasks', icon: Clapperboard, label: 'menu.tasks' },
-  { key: '/settings', icon: Settings, label: 'menu.settings' },
+  { key: '/dashboard', icon: LayoutDashboard, label: 'layout:menu.dashboard' },
+  { key: '/channels', icon: Tv, label: 'layout:menu.channels' },
+  { key: '/schedules', icon: CalendarClock, label: 'layout:menu.schedules' },
+  { key: '/tasks', icon: Clapperboard, label: 'layout:menu.tasks' },
+  { key: '/settings', icon: Settings, label: 'layout:menu.settings' },
 ];
 
 export const Layout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation(['layout', 'common']);
+  const isI18nReady = useI18nNamespace(['layout', 'common']);
   const {
     sidebarCollapsed,
     setSidebarCollapsed,
@@ -45,13 +50,13 @@ export const Layout: React.FC = () => {
   } = useUIStore();
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
+  const { language, setLanguage } = useSettingStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAlertMenu, setShowAlertMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const alertMenuRef = useRef<HTMLDivElement>(null);
   const unreadAlertCount = alerts.filter((alert) => !alert.read).length;
 
-  // 点击外部关闭用户菜单
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
@@ -65,30 +70,26 @@ export const Layout: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleLanguageChange = () => {
-    const currentLang = localStorage.getItem('language') || 'zh-CN';
-    const newLang = currentLang === 'zh-CN' ? 'en-US' : 'zh-CN';
-    localStorage.setItem('language', newLang);
-    window.location.reload();
+  const handleLanguageChange = async () => {
+    await setLanguage(language === 'zh-CN' ? 'en-US' : 'zh-CN');
   };
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+  const displayName =
+    user?.nickname === '管理员'
+      ? t(user.role === 'admin' ? 'common:admin' : 'common:user')
+      : user?.nickname || user?.username || 'User';
 
-  const alertLevelText: Record<string, string> = {
-    info: '信息',
-    warning: '警告',
-    error: '错误',
-    critical: '严重',
-  };
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   return (
     <div className="app-layout">
-      {/* Sidebar */}
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        {/* Logo */}
         <div className="sidebar-logo">
           <div className="logo-icon">
             <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -113,7 +114,6 @@ export const Layout: React.FC = () => {
           )}
         </div>
 
-        {/* Navigation */}
         <nav className="sidebar-nav">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -125,13 +125,12 @@ export const Layout: React.FC = () => {
                 onClick={() => navigate(item.key)}
               >
                 <Icon size={20} strokeWidth={1.75} />
-                {!sidebarCollapsed && <span>{t(item.label as any)}</span>}
+                {!sidebarCollapsed && <span>{t(item.label)}</span>}
               </div>
             );
           })}
         </nav>
 
-        {/* Collapse Toggle */}
         <button
           className="sidebar-toggle"
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -144,9 +143,7 @@ export const Layout: React.FC = () => {
         </button>
       </aside>
 
-      {/* Main Area */}
       <div className={`main-area ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-        {/* Header */}
         <header className="header header-glass">
           <div className="header-left">
             <button className="header-btn mobile-menu">
@@ -154,16 +151,14 @@ export const Layout: React.FC = () => {
             </button>
           </div>
           <div className="header-right">
-            {/* Theme Toggle */}
             <button
               className="header-btn theme-toggle-btn"
               onClick={toggleTheme}
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              title={theme === 'dark' ? t('layout:theme.switchToLight') : t('layout:theme.switchToDark')}
             >
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
-            {/* Notifications */}
             <div className="alert-menu-container" ref={alertMenuRef}>
               <button
                 className="header-btn"
@@ -184,10 +179,10 @@ export const Layout: React.FC = () => {
               {showAlertMenu && (
                 <div className="alert-dropdown">
                   <div className="alert-dropdown-header">
-                    <span>系统告警</span>
+                    <span>{t('layout:alerts.title')}</span>
                     {alerts.length > 0 && (
                       <button className="alert-clear-btn" onClick={markAllAlertsRead}>
-                        全部已读
+                        {t('layout:alerts.markAllRead')}
                       </button>
                     )}
                   </div>
@@ -198,12 +193,9 @@ export const Layout: React.FC = () => {
                         <div key={alert.id} className={`alert-item alert-${alert.level}`}>
                           <div className="alert-item-main">
                             <div className="alert-item-top">
-                              <span className="alert-level">{alertLevelText[alert.level]}</span>
+                              <span className="alert-level">{t(`layout:alerts.levels.${alert.level}`)}</span>
                               <span className="alert-time">
-                                {new Date(alert.created_at).toLocaleTimeString('zh-CN', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
+                                {formatShortDateTime(alert.created_at, i18n.language as AppLanguage)}
                               </span>
                             </div>
                             <div className="alert-message">{alert.message}</div>
@@ -221,19 +213,17 @@ export const Layout: React.FC = () => {
                       ))}
                     </div>
                   ) : (
-                    <div className="alert-empty">暂无系统告警</div>
+                    <div className="alert-empty">{t('layout:alerts.empty')}</div>
                   )}
                 </div>
               )}
             </div>
 
-            {/* Language */}
-            <button className="header-btn" onClick={handleLanguageChange}>
+            <button className="header-btn" onClick={handleLanguageChange} title={t('layout:language.label')}>
               <Globe size={18} />
-              <span>{localStorage.getItem('language') === 'en-US' ? 'EN' : '中'}</span>
+              <span>{t('layout:language.short')}</span>
             </button>
 
-            {/* User Menu */}
             <div className="user-menu-container" ref={userMenuRef}>
               <button
                 className="user-menu-trigger"
@@ -242,7 +232,7 @@ export const Layout: React.FC = () => {
                 <div className="user-avatar">
                   <User size={16} />
                 </div>
-                <span className="user-name">{user?.nickname || user?.username || 'User'}</span>
+                <span className="user-name">{displayName}</span>
                 <ChevronDown size={14} className={showUserMenu ? 'rotate' : ''} />
               </button>
 
@@ -253,8 +243,8 @@ export const Layout: React.FC = () => {
                       <User size={20} />
                     </div>
                     <div className="user-dropdown-info">
-                      <div className="user-dropdown-name">{user?.nickname || user?.username}</div>
-                      <div className="user-dropdown-role">{user?.role === 'admin' ? '管理员' : '用户'}</div>
+                      <div className="user-dropdown-name">{displayName}</div>
+                      <div className="user-dropdown-role">{user?.role === 'admin' ? t('common:admin') : t('common:user')}</div>
                     </div>
                   </div>
                   <div className="user-dropdown-divider" />
@@ -266,11 +256,11 @@ export const Layout: React.FC = () => {
                     }}
                   >
                     <Settings size={16} />
-                    <span>设置</span>
+                    <span>{t('common:settings')}</span>
                   </button>
                   <button className="user-dropdown-item danger" onClick={handleLogout}>
                     <LogOut size={16} />
-                    <span>退出登录</span>
+                    <span>{t('common:logout')}</span>
                   </button>
                 </div>
               )}
@@ -278,7 +268,6 @@ export const Layout: React.FC = () => {
           </div>
         </header>
 
-        {/* Content */}
         <main className="content">
           <Outlet />
         </main>

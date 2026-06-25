@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import Hls, { type ErrorData } from 'hls.js/light';
 import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
 import apiClient from '@/api/client';
 import { getStoredAuthToken } from '@/stores/authStore';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import type { Channel } from '@/types';
 import './PlayerModal.css';
 
@@ -20,15 +22,29 @@ const buildApiPath = (path: string): string => {
   return path.startsWith('/') ? path : `/${path}`;
 };
 
+const isLoopbackHost = (host: string): boolean => {
+  const hostname = host.split(':')[0]?.toLowerCase();
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+};
+
 const resolveApiOrigin = (): string => {
+  const pageHost = window.location.host;
   const configuredBase = apiClient.defaults.baseURL;
   if (typeof configuredBase === 'string' && /^https?:\/\//.test(configuredBase)) {
-    return new URL(configuredBase).origin;
+    const configuredUrl = new URL(configuredBase);
+    if (!isLoopbackHost(pageHost) && isLoopbackHost(configuredUrl.host)) {
+      return window.location.origin;
+    }
+    return configuredUrl.origin;
   }
 
   const envBase = import.meta.env.VITE_API_BASE_URL;
   if (typeof envBase === 'string' && /^https?:\/\//.test(envBase)) {
-    return new URL(envBase).origin;
+    const envUrl = new URL(envBase);
+    if (!isLoopbackHost(pageHost) && isLoopbackHost(envUrl.host)) {
+      return window.location.origin;
+    }
+    return envUrl.origin;
   }
 
   return window.location.origin;
@@ -46,6 +62,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   onClose,
   channel,
 }) => {
+  const { t } = useTranslation(['components']);
+  useI18nNamespace('components');
   const { id: channelId, name: channelName, url: channelUrl, source_visibility, playback_strategy } = channel;
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -57,6 +75,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [transcoding, setTranscoding] = useState(false);
+  const [recordingActive, setRecordingActive] = useState(false);
   const playbackStartedRef = useRef(false);
 
   const requestVideoPlay = useCallback(async (video: HTMLVideoElement) => {
@@ -165,9 +184,9 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         }
       }
 
-      onFatal(`播放失败: ${data.type} - ${data.details}`);
+      onFatal(t('components:player.playFailed', { type: data.type, details: data.details }));
     });
-  }, []);
+  }, [t]);
 
   // 关闭时清理
   useEffect(() => {
@@ -212,8 +231,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     const handleVideoError = () => {
       const mediaError = video.error;
       const message = mediaError
-        ? `视频解码失败（code=${mediaError.code}）`
-        : '视频加载失败';
+        ? t('components:player.decodeFailed', { code: mediaError.code })
+        : t('components:player.videoLoadFailed');
       setError(message);
       setLoading(false);
       setTranscoding(false);
@@ -236,7 +255,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       video.removeEventListener('ended', handleEnded);
       video.removeEventListener('error', handleVideoError);
     };
-  }, [isOpen, requestVideoPlay]);
+  }, [isOpen, requestVideoPlay, t]);
 
   // 播放 UDP 流（需要转码）
   const playUDPStream = useCallback(async () => {
@@ -262,6 +281,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       }
       sessionIdRef.current = result.session_id;
       sessionChannelIdRef.current = channelId;
+      setRecordingActive(result.recording_active);
 
       const hlsUrl = buildApiUrl(result.playlist_url);
       hlsUrlRef.current = hlsUrl; // 保存 HLS URL 供外部播放器使用
@@ -279,13 +299,13 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             verified = true;
             break;
           }
-        } catch (e) {
+        } catch {
           console.log('HLS file check failed, retrying...');
         }
       }
 
       if (!verified) {
-        throw new Error('HLS 文件生成超时，请稍后重试；若源是内网组播/网关流，服务端可能仍在等待稳定关键帧');
+        throw new Error(t('components:player.hlsTimeout'));
       }
 
       if (!isCurrentAttempt()) {
@@ -310,8 +330,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           liveBackBufferLength: 30,
           startLevel: -1,
           autoStartLoad: true,
-          liveSyncDurationCount: 3,
-          liveMaxLatencyDurationCount: 8,
+          liveSyncDurationCount: 4,
+          liveMaxLatencyDurationCount: 12,
           startFragPrefetch: true,
           manifestLoadingTimeOut: 10000,
           manifestLoadingMaxRetry: 6,
@@ -335,7 +355,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           if (!isCurrentAttempt()) {
             return;
           }
-          await tryStartPlayback(video, 0.1);
+          await tryStartPlayback(video, 6);
         });
         attachHlsErrorRecovery(hls, hlsUrl, (message) => {
           if (!isCurrentAttempt()) {
@@ -360,11 +380,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         return;
       }
       console.error('Transcode error:', e);
-      setError(e instanceof Error ? e.message : '转码启动失败，请确保服务器已安装 FFmpeg');
+      setError(e instanceof Error ? e.message : t('components:player.transcodeStartFailed'));
       setLoading(false);
       setTranscoding(false);
     }
-  }, [channelId, cleanupTranscode]);
+  }, [attachHlsErrorRecovery, channelId, cleanupTranscode, requestVideoPlay, t, tryStartPlayback]);
 
   // 播放 HLS 流
   const playHLSStream = useCallback(() => {
@@ -385,8 +405,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
         maxBufferHole: 0.8,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 8,
+        liveSyncDurationCount: 4,
+        liveMaxLatencyDurationCount: 12,
       });
 
       hls.loadSource(proxyUrl);
@@ -400,7 +420,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         if (!isCurrentAttempt()) {
           return;
         }
-        await tryStartPlayback(video, 0.1);
+        await tryStartPlayback(video, 6);
       });
       attachHlsErrorRecovery(hls, proxyUrl, (message) => {
         if (!isCurrentAttempt()) {
@@ -437,10 +457,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       video.play().catch(() => {});
     });
     video.addEventListener('error', () => {
-      setError('视频格式不支持或加载失败');
+      setError(t('components:player.formatUnsupported'));
       setLoading(false);
     });
-  }, [channelId]);
+  }, [channelId, t]);
 
   // 初始化播放
   useEffect(() => {
@@ -450,6 +470,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       setError(null);
       setLoading(true);
       setTranscoding(false);
+      setRecordingActive(false);
       recoveryAttemptRef.current = { media: 0, network: 0 };
       playbackStartedRef.current = false;
 
@@ -462,7 +483,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         isUDP;
 
       if (playback_strategy === 'record_only') {
-        setError('该频道当前设置为仅允许录制，不提供在线预览。');
+        setError(t('components:player.recordOnly'));
         setLoading(false);
         return;
       }
@@ -479,7 +500,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     return () => {
       cleanupHls();
     };
-  }, [isOpen, channelUrl, cleanupHls, playUDPStream, playHLSStream, playOtherStream, playback_strategy, source_visibility]);
+  }, [isOpen, channelUrl, cleanupHls, playUDPStream, playHLSStream, playOtherStream, playback_strategy, source_visibility, t]);
 
   // 关闭时停止转码
   const handleClose = useCallback(async () => {
@@ -502,11 +523,13 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
 
   const handleCopyUrl = () => {
     const token = getStoredAuthToken();
-    const urlToCopy = source_visibility === 'private_server_only'
-      ? buildApiUrl(`/api/channels/${channelId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`)
-      : channelUrl;
+    const serverStreamUrl = buildApiUrl(`/api/channels/${channelId}/stream${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`);
+    const urlToCopy = hlsUrlRef.current
+      || (source_visibility === 'private_server_only' ? serverStreamUrl : channelUrl);
     navigator.clipboard.writeText(urlToCopy).then(() => {
-      alert('流地址已复制到剪贴板');
+      alert(t('components:player.copied'));
     });
   };
 
@@ -525,14 +548,14 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             <button
               className="btn btn-ghost btn-sm"
               onClick={handleCopyUrl}
-              title="复制流地址"
+              title={t('components:player.copyTitle')}
             >
-              复制地址
+              {t('components:player.copyAddress')}
             </button>
             <button
               className="btn btn-ghost btn-sm"
               onClick={handleOpenExternal}
-              title="在外部播放器打开"
+              title={t('components:player.openExternalTitle')}
             >
               <ExternalLink size={16} />
             </button>
@@ -545,13 +568,18 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
           <div className="player-video-container">
             {source_visibility === 'private_server_only' && !error && (
               <div className="player-warning-banner">
-                私有源正在通过服务器中转播放，外网预览会占用服务器出口带宽。
+                {t('components:player.privateRelayWarning')}
+              </div>
+            )}
+            {recordingActive && !error && (
+              <div className="player-warning-banner player-warning-banner-secondary">
+                {t('components:player.recordingActiveWarning')}
               </div>
             )}
             {(loading || transcoding) && !error && (
               <div className="player-loading">
                 <Loader2 size={48} className="animate-spin" />
-                <span>{transcoding ? '正在转码...' : '加载中...'}</span>
+                <span>{transcoding ? t('components:player.transcoding') : t('components:player.loading')}</span>
               </div>
             )}
             {error && (
@@ -578,7 +606,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
                     }
                   }}
                 >
-                  重试
+                  {t('components:player.retry')}
                 </button>
               </div>
             )}
@@ -594,7 +622,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             />
           </div>
           <div className="player-url">
-            <span>流地址：</span>
+            <span>{t('components:player.streamUrl')}</span>
             <code>{channelUrl}</code>
           </div>
         </div>

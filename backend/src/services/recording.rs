@@ -4,7 +4,7 @@ use crate::{
     core::event::{
         Event, EventSender, TaskProgressEvent, TaskStatus as EventTaskStatus, TaskUpdateEvent,
     },
-    core::process::{ProcessManager, RecordingConfig},
+    core::process::{ProcessManager, RecordingConfig, RecordingEngine},
     models::{Channel, ManualRecordRequest, Task},
     services::{PostProcessor, ServiceContext},
 };
@@ -24,6 +24,7 @@ pub struct RecordingService {
 
 struct RuntimeRecordingSettings {
     recorder_executable: PathBuf,
+    ffmpeg_executable: PathBuf,
     recordings_dir: PathBuf,
     default_duration_seconds: i64,
     default_thread_count: i32,
@@ -49,7 +50,6 @@ impl RecordingService {
         let task_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let runtime_settings = self.load_runtime_settings().await?;
-        self.validate_recorder_executable(&runtime_settings.recorder_executable)?;
         let duration_seconds = req
             .duration_seconds
             .filter(|duration| *duration > 0)
@@ -62,8 +62,16 @@ impl RecordingService {
 
         // 获取频道信息
         let channel = self.get_channel(&req.channel_id).await?;
-        self.validate_schedule_id(req.schedule_id.as_deref()).await?;
-        self.ensure_recording_capacity(&req, &runtime_settings).await?;
+        let recording_engine = select_recording_engine(&channel.url);
+        let recorder_executable = match recording_engine {
+            RecordingEngine::NM3u8dlRe => runtime_settings.recorder_executable.clone(),
+            RecordingEngine::Ffmpeg => runtime_settings.ffmpeg_executable.clone(),
+        };
+        self.validate_recorder_executable(recording_engine, &recorder_executable)?;
+        self.validate_schedule_id(req.schedule_id.as_deref())
+            .await?;
+        self.ensure_recording_capacity(&req, &runtime_settings)
+            .await?;
 
         // 构建输出文件路径（支持自定义目录和模板）
         let output_path = self
@@ -73,6 +81,7 @@ impl RecordingService {
                 &req.output_name,
                 &req.output_dir,
                 req.output_template.as_deref(),
+                req.transcode_mode.as_deref(),
                 &runtime_settings.recordings_dir,
             )
             .await?;
@@ -96,7 +105,8 @@ impl RecordingService {
 
         // 构建录制配置
         let config = RecordingConfig {
-            recorder_executable: Some(runtime_settings.recorder_executable.clone()),
+            recorder_executable: Some(recorder_executable),
+            engine: recording_engine,
             url: channel.url.clone(),
             output_path: output_path.clone(),
             duration_seconds: Some(duration_seconds as u64),
@@ -658,6 +668,7 @@ impl RecordingService {
         custom_name: &Option<String>,
         custom_dir: &Option<String>,
         output_template: Option<&str>,
+        transcode_mode: Option<&str>,
         default_recordings_dir: &std::path::Path,
     ) -> Result<PathBuf> {
         // 确定输出目录：优先使用自定义目录，否则使用系统默认
@@ -719,6 +730,8 @@ impl RecordingService {
             Self::generate_default_filename(channel)
         };
 
+        let filename = Self::ensure_recording_extension(&filename, transcode_mode);
+
         info!("最终输出路径: {}/{}", output_dir, filename);
         Ok(PathBuf::from(&output_dir).join(filename))
     }
@@ -772,6 +785,21 @@ impl RecordingService {
         }
     }
 
+    fn ensure_recording_extension(filename: &str, transcode_mode: Option<&str>) -> String {
+        let path = Path::new(filename);
+        if path.extension().is_some() {
+            filename.to_string()
+        } else if let Some(mode) = transcode_mode {
+            if mode == "off" || mode.is_empty() {
+                format!("{filename}.ts")
+            } else {
+                format!("{filename}.mp4")
+            }
+        } else {
+            format!("{filename}.ts")
+        }
+    }
+
     async fn load_runtime_settings(&self) -> Result<RuntimeRecordingSettings> {
         let recorder_executable = self
             .get_system_value_string(
@@ -779,16 +807,29 @@ impl RecordingService {
                 &self.ctx.config.recorder.executable.to_string_lossy(),
             )
             .await?;
+        let recorder_executable = normalize_recorder_executable(&recorder_executable);
         let recordings_dir = self
             .get_system_value_string(
                 "storage.recordings_path",
                 &self.ctx.config.storage.recordings_dir.to_string_lossy(),
             )
             .await?;
-        let min_free_space_gb = self.get_system_value("storage.min_free_space_gb", 0u64).await?;
+        let ffmpeg_default = if self.ctx.config.recorder.post_process.ffmpeg_path.is_empty() {
+            "ffmpeg".to_string()
+        } else {
+            self.ctx.config.recorder.post_process.ffmpeg_path.clone()
+        };
+        let ffmpeg_executable = self
+            .get_system_value_string("recorder.post_process.ffmpeg_path", &ffmpeg_default)
+            .await?;
+        let ffmpeg_executable = normalize_ffmpeg_executable(&ffmpeg_executable);
+        let min_free_space_gb = self
+            .get_system_value("storage.min_free_space_gb", 0u64)
+            .await?;
 
         Ok(RuntimeRecordingSettings {
-            recorder_executable: PathBuf::from(recorder_executable),
+            recorder_executable,
+            ffmpeg_executable,
             recordings_dir: PathBuf::from(recordings_dir),
             default_duration_seconds: self
                 .get_system_value("recording.default_duration_minutes", 60u32)
@@ -855,15 +896,30 @@ impl RecordingService {
         PostProcessor::new(config, runtime_settings.recordings_dir.clone())
     }
 
-    fn validate_recorder_executable(&self, executable: &Path) -> Result<()> {
-        if executable.is_absolute() && !executable.exists() {
-            return Err(anyhow::anyhow!(
-                "录制工具未找到: {}，请在设置中配置正确路径或将其加入系统 PATH",
-                executable.display()
-            ));
+    fn validate_recorder_executable(
+        &self,
+        engine: RecordingEngine,
+        executable: &Path,
+    ) -> Result<()> {
+        if executable.is_absolute() {
+            if executable.is_file() {
+                return Ok(());
+            }
+        } else if command_exists(executable) {
+            return Ok(());
         }
 
-        Ok(())
+        let (tool_name, config_key) = match engine {
+            RecordingEngine::NM3u8dlRe => ("N_m3u8DL-RE", "recording.n_m3u8dl_re_path"),
+            RecordingEngine::Ffmpeg => ("FFmpeg", "recorder.post_process.ffmpeg_path"),
+        };
+
+        Err(anyhow::anyhow!(
+            "录制工具未找到: {} (当前配置: {}). 请在设置里配置 {}，或把它加入系统 PATH。",
+            tool_name,
+            executable.display(),
+            config_key
+        ))
     }
 
     async fn ensure_recording_capacity(
@@ -900,20 +956,22 @@ impl RecordingService {
     }
 
     async fn has_running_task_for_channel(&self, channel_id: &str) -> Result<bool> {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM tasks WHERE channel_id = ? AND status = 'running' LIMIT 1")
-                .bind(channel_id)
-                .fetch_optional(&self.ctx.db)
-                .await?;
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM tasks WHERE channel_id = ? AND status = 'running' LIMIT 1",
+        )
+        .bind(channel_id)
+        .fetch_optional(&self.ctx.db)
+        .await?;
         Ok(existing.is_some())
     }
 
     async fn has_running_task_for_schedule(&self, schedule_id: &str) -> Result<bool> {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM tasks WHERE schedule_id = ? AND status = 'running' LIMIT 1")
-                .bind(schedule_id)
-                .fetch_optional(&self.ctx.db)
-                .await?;
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM tasks WHERE schedule_id = ? AND status = 'running' LIMIT 1",
+        )
+        .bind(schedule_id)
+        .fetch_optional(&self.ctx.db)
+        .await?;
         Ok(existing.is_some())
     }
 
@@ -939,6 +997,42 @@ impl RecordingService {
 
         Ok(())
     }
+}
+
+fn normalize_ffmpeg_executable(configured_path: &str) -> PathBuf {
+    let configured_path = configured_path.trim();
+    if configured_path.is_empty() {
+        return PathBuf::from("ffmpeg");
+    }
+
+    let path = PathBuf::from(configured_path);
+    if path.is_absolute() && !path.is_file() && command_exists(Path::new("ffmpeg")) {
+        tracing::warn!(
+            "Configured FFmpeg path does not exist in this runtime: {}. Falling back to ffmpeg from PATH.",
+            path.display()
+        );
+        return PathBuf::from("ffmpeg");
+    }
+
+    path
+}
+
+fn normalize_recorder_executable(configured_path: &str) -> PathBuf {
+    let configured_path = configured_path.trim();
+    if configured_path.is_empty() {
+        return PathBuf::from("N_m3u8DL-RE");
+    }
+
+    let path = PathBuf::from(configured_path);
+    if path.is_absolute() && !path.is_file() && command_exists(Path::new("N_m3u8DL-RE")) {
+        tracing::warn!(
+            "Configured N_m3u8DL-RE path does not exist in this runtime: {}. Falling back to N_m3u8DL-RE from PATH.",
+            path.display()
+        );
+        return PathBuf::from("N_m3u8DL-RE");
+    }
+
+    path
 }
 
 /// 查找实际的输出文件（N_m3u8DL-RE 可能输出不同扩展名和文件名）
@@ -1040,10 +1134,100 @@ async fn find_actual_output_file(expected_path: &PathBuf) -> Option<PathBuf> {
     None
 }
 
+fn select_recording_engine(url: &str) -> RecordingEngine {
+    let lower = url.to_ascii_lowercase();
+    if lower.contains(".m3u8") || lower.contains(".mpd") {
+        RecordingEngine::NM3u8dlRe
+    } else {
+        RecordingEngine::Ffmpeg
+    }
+}
+
+fn command_exists(executable: &Path) -> bool {
+    if executable.components().count() > 1 {
+        return executable.is_file();
+    }
+
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let candidates = command_name_candidates(executable);
+    std::env::split_paths(&paths).any(|dir| candidates.iter().any(|name| dir.join(name).is_file()))
+}
+
+fn command_name_candidates(executable: &Path) -> Vec<std::ffi::OsString> {
+    let name = executable.as_os_str().to_os_string();
+    #[cfg(windows)]
+    {
+        let lower = executable.to_string_lossy().to_ascii_lowercase();
+        if lower.ends_with(".exe") {
+            vec![name]
+        } else {
+            vec![
+                name,
+                std::ffi::OsString::from(format!("{}.exe", executable.display())),
+            ]
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        vec![name]
+    }
+}
+
 async fn get_available_space(path: &Path) -> Result<u64> {
-    let output = tokio::process::Command::new("df")
-        .arg("-B1")
-        .arg(path)
+    #[cfg(windows)]
+    {
+        return get_available_space_windows(path).await;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let output = tokio::process::Command::new("df")
+            .arg("-B1")
+            .arg(path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "检查磁盘剩余空间失败: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let line = stdout
+            .lines()
+            .nth(1)
+            .ok_or_else(|| anyhow::anyhow!("无法解析 df 输出"))?;
+        let available = line
+            .split_whitespace()
+            .nth(3)
+            .ok_or_else(|| anyhow::anyhow!("无法解析 df 可用空间字段"))?
+            .parse::<u64>()?;
+
+        Ok(available)
+    }
+}
+
+#[cfg(windows)]
+async fn get_available_space_windows(path: &Path) -> Result<u64> {
+    let canonical = tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
+    let path_str = canonical.to_string_lossy();
+    let drive = path_str.chars().take(2).collect::<String>();
+    if !drive.ends_with(':') {
+        return Ok(u64::MAX);
+    }
+
+    let script = format!(
+        "(Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='{}'\").FreeSpace",
+        drive
+    );
+    let output = tokio::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
         .output()
         .await?;
 
@@ -1055,17 +1239,10 @@ async fn get_available_space(path: &Path) -> Result<u64> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout
-        .lines()
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("无法解析 df 输出"))?;
-    let available = line
-        .split_whitespace()
-        .nth(3)
-        .ok_or_else(|| anyhow::anyhow!("无法解析 df 可用空间字段"))?
-        .parse::<u64>()?;
-
-    Ok(available)
+    stdout
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| anyhow::anyhow!("无法解析 Windows 磁盘剩余空间: {}", e))
 }
 
 #[cfg(test)]
@@ -1087,6 +1264,22 @@ mod tests {
             .expect("time went backwards")
             .as_nanos();
         std::env::temp_dir().join(format!("iptv-recorder-{name}-{nanos}.db"))
+    }
+
+    #[test]
+    fn selects_recorder_engine_by_stream_type() {
+        assert_eq!(
+            select_recording_engine("https://example.com/live/stream.m3u8"),
+            RecordingEngine::NM3u8dlRe
+        );
+        assert_eq!(
+            select_recording_engine("https://example.com/live/manifest.mpd"),
+            RecordingEngine::NM3u8dlRe
+        );
+        assert_eq!(
+            select_recording_engine("http://192.168.0.211:4022/udp/239.77.0.147:5146"),
+            RecordingEngine::Ffmpeg
+        );
     }
 
     #[tokio::test]
@@ -1283,10 +1476,11 @@ mod tests {
 
         assert!(err.to_string().contains("录制工具未找到"));
 
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
-            .fetch_one(&service.ctx.db)
-            .await
-            .expect("count running tasks");
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
+                .fetch_one(&service.ctx.db)
+                .await
+                .expect("count running tasks");
         assert_eq!(count, 0);
 
         let _ = tokio::fs::remove_file(db_path).await;
@@ -1295,7 +1489,10 @@ mod tests {
     #[tokio::test]
     async fn build_output_path_sanitizes_custom_name() {
         let (service, db_path) = test_service("recording-output-name").await;
-        let channel = service.get_channel("channel-1").await.expect("load channel");
+        let channel = service
+            .get_channel("channel-1")
+            .await
+            .expect("load channel");
 
         let path = service
             .build_output_path(
@@ -1304,6 +1501,7 @@ mod tests {
                 &Some("../unsafe/subdir/../../video.ts".to_string()),
                 &None,
                 None,
+                None,
                 Path::new("./data/recordings"),
             )
             .await
@@ -1311,18 +1509,42 @@ mod tests {
 
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("video")
+            Some("video.ts")
         );
 
         let _ = tokio::fs::remove_file(db_path).await;
     }
 
     #[tokio::test]
+    async fn build_output_path_adds_default_ts_extension() {
+        let (service, db_path) = test_service("recording-output-extension").await;
+        let channel = service
+            .get_channel("channel-1")
+            .await
+            .expect("load channel");
+
+        let path = service
+            .build_output_path(
+                &channel,
+                "task-1",
+                &None,
+                &None,
+                None,
+                None,
+                Path::new("./data/recordings"),
+            )
+            .await
+            .expect("build output path");
+
+        assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("ts"));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    #[tokio::test]
     async fn find_actual_output_file_does_not_pick_unrelated_latest_file() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "iptv-recorder-find-output-{}",
-            Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("iptv-recorder-find-output-{}", Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .expect("create temp dir");
@@ -1344,9 +1566,10 @@ mod tests {
     async fn start_manual_persists_schedule_id() {
         let (service, db_path) = test_service("recording-schedule-id").await;
         insert_schedule(&service.ctx.db, "schedule-42", "channel-1").await;
+        let recorder_path = std::env::current_exe().expect("current exe path");
 
         sqlx::query("UPDATE system_config SET value = ? WHERE key = 'recording.n_m3u8dl_re_path'")
-            .bind("/bin/sh")
+            .bind(recorder_path.to_string_lossy().to_string())
             .execute(&service.ctx.db)
             .await
             .expect("update recorder path");
@@ -1419,6 +1642,7 @@ mod tests {
                 &req,
                 &RuntimeRecordingSettings {
                     recorder_executable: PathBuf::from("recorder"),
+                    ffmpeg_executable: PathBuf::from("ffmpeg"),
                     recordings_dir: std::env::temp_dir(),
                     default_duration_seconds: 60,
                     default_thread_count: 1,
@@ -1481,6 +1705,7 @@ mod tests {
                 },
                 &RuntimeRecordingSettings {
                     recorder_executable: PathBuf::from("recorder"),
+                    ffmpeg_executable: PathBuf::from("ffmpeg"),
                     recordings_dir: std::env::temp_dir(),
                     default_duration_seconds: 60,
                     default_thread_count: 1,

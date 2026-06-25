@@ -20,6 +20,17 @@ export interface ConfigUpdateRequest {
   };
 }
 
+export interface ServerDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface ServerDirectoryList {
+  current_path: string;
+  parent_path: string | null;
+  entries: ServerDirectoryEntry[];
+}
+
 // 获取即将执行的任务
 export const getUpcoming = (): Promise<UpcomingTask[]> => {
   return apiClient.get('/scheduler/upcoming').then((res) => res.data);
@@ -38,6 +49,12 @@ export const getConfig = (): Promise<SystemConfig> => {
 // 更新系统配置
 export const updateConfig = (data: ConfigUpdateRequest): Promise<SystemConfig> => {
   return apiClient.post('/config', data).then((res) => res.data);
+};
+
+export const listServerDirectories = (path?: string): Promise<ServerDirectoryList> => {
+  return apiClient
+    .get('/system/directories', { params: path ? { path } : undefined })
+    .then((res) => res.data);
 };
 
 export const getSystemHealth = (): Promise<SystemHealth> => {

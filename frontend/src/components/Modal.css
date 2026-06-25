@@ -5,10 +5,12 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
   z-index: 1000;
   animation: fade-in 0.2s ease-out;
 }
@@ -17,13 +19,14 @@
 .modal-content {
   background: var(--bg-card);
   border: 1px solid var(--border-default);
-  border-radius: 16px;
+  border-radius: 8px;
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
+  max-height: min(90vh, 820px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-shadow: var(--shadow-lg);
   animation: slide-up 0.3s ease-out;
 }
 
@@ -43,25 +46,33 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  min-height: 64px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-card);
 }
 
 .modal-header h2 {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+  line-height: 1.4;
 }
 
 .modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   background: transparent;
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 4px;
   border-radius: 6px;
   transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
 .modal-close:hover {
@@ -69,10 +80,16 @@
   color: var(--text-primary);
 }
 
+.modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* Modal Body */
 .modal-body {
-  padding: 24px;
+  padding: 20px;
   overflow-y: auto;
+  min-height: 0;
 }
 
 /* Modal Tabs */
@@ -219,7 +236,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  padding: 16px 24px;
+  padding: 14px 20px;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-elevated);
 }
@@ -352,7 +369,7 @@ select.input {
 .epg-program-item {
   padding: 14px 16px;
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bg-panel);
 }
 

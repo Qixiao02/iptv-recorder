@@ -1,11 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getConfig, updateConfig, getSystemHealth, getAuditLogs, runCleanup, reloadScheduler } from '@/api/system';
+import {
+  getConfig,
+  updateConfig,
+  getSystemHealth,
+  getAuditLogs,
+  runCleanup,
+  reloadScheduler,
+  listServerDirectories,
+  type ServerDirectoryList,
+} from '@/api/system';
 import { changePassword } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSettingStore } from '@/stores/settingStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { formatShortDateTime } from '@/i18n/format';
+import type { AppLanguage } from '@/i18n/types';
 import type { SystemConfig } from '@/types';
 import { buildConfigUpdateRequest } from './configPayload';
 import {
@@ -35,12 +47,13 @@ import {
   Server,
   FileText,
   Calendar,
+  X,
 } from 'lucide-react';
+import '@/components/Modal.css';
 import './Settings.css';
 
 type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'operations' | 'account' | 'about';
 
-// 默认配置（用于初始化和重置）
 const defaultConfig: SystemConfig = {
   server: { host: '127.0.0.1', port: 3000 },
   storage: { recordings_path: './data/recordings', auto_cleanup_days: 30, min_free_space_gb: 10 },
@@ -49,29 +62,33 @@ const defaultConfig: SystemConfig = {
 };
 
 export const SettingsPage: React.FC = () => {
-  const { t, i18n } = useTranslation();
+  const { t, i18n } = useTranslation(['settings', 'common']);
+  const isI18nReady = useI18nNamespace(['settings', 'common']);
   const queryClient = useQueryClient();
   const { language, setLanguage } = useSettingStore();
   const [activeSection, setActiveSection] = useState<SettingsSection>('general');
   const [localConfig, setLocalConfig] = useState<SystemConfig>(defaultConfig);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryList, setDirectoryList] = useState<ServerDirectoryList | null>(null);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState('');
   const { user } = useAuthStore();
   const alerts = useUIStore((state) => state.alerts);
   const addAlert = useUIStore((state) => state.addAlert);
   const isAdmin = user?.role === 'admin';
 
   const sections: { key: SettingsSection; icon: React.ReactNode; label: string }[] = [
-    { key: 'general', icon: <Settings size={18} />, label: t('settings.general') },
-    { key: 'storage', icon: <Database size={18} />, label: t('settings.storage') },
-    { key: 'recording', icon: <Clapperboard size={18} />, label: t('settings.recording') },
-    { key: 'notification', icon: <Bell size={18} />, label: t('settings.notification') },
-    ...(isAdmin ? [{ key: 'operations' as const, icon: <ShieldAlert size={18} />, label: '运行维护' }] : []),
-    { key: 'account', icon: <User size={18} />, label: t('settings.account') },
-    { key: 'about', icon: <Info size={18} />, label: t('settings.about') },
+    { key: 'general', icon: <Settings size={18} />, label: t('settings:sections.general') },
+    { key: 'storage', icon: <Database size={18} />, label: t('settings:sections.storage') },
+    { key: 'recording', icon: <Clapperboard size={18} />, label: t('settings:sections.recording') },
+    { key: 'notification', icon: <Bell size={18} />, label: t('settings:sections.notification') },
+    ...(isAdmin ? [{ key: 'operations' as const, icon: <ShieldAlert size={18} />, label: t('settings:sections.operations') }] : []),
+    { key: 'account', icon: <User size={18} />, label: t('settings:sections.account') },
+    { key: 'about', icon: <Info size={18} />, label: t('settings:sections.about') },
   ];
 
-  // 密码修改状态
   const [passwordForm, setPasswordForm] = useState({
     old_password: '',
     new_password: '',
@@ -82,7 +99,6 @@ export const SettingsPage: React.FC = () => {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // 获取配置
   const { data: config, isLoading, refetch: refetchConfig } = useQuery({
     queryKey: ['config'],
     queryFn: getConfig,
@@ -109,20 +125,18 @@ export const SettingsPage: React.FC = () => {
     enabled: isAdmin,
   });
 
-  // 当从服务器获取到配置时，更新本地状态
   useEffect(() => {
     if (config) {
-      setLocalConfig(config);
+      queueMicrotask(() => setLocalConfig(config));
     }
   }, [config]);
 
   useEffect(() => {
     if (!isAdmin && activeSection === 'operations') {
-      setActiveSection('general');
+      queueMicrotask(() => setActiveSection('general'));
     }
   }, [activeSection, isAdmin]);
 
-  // 保存配置
   const saveMutation = useMutation({
     mutationFn: updateConfig,
     onSuccess: (data) => {
@@ -133,11 +147,10 @@ export const SettingsPage: React.FC = () => {
       setTimeout(() => setSaveSuccess(false), 2000);
     },
     onError: (error) => {
-      setSaveError(error instanceof Error ? error.message : t('settings.settingsSaveFailed'));
+      setSaveError(error instanceof Error ? error.message : t('settings:saveFailed'));
     },
   });
 
-  // 修改密码
   const passwordMutation = useMutation({
     mutationFn: () => changePassword({
       old_password: passwordForm.old_password,
@@ -150,7 +163,7 @@ export const SettingsPage: React.FC = () => {
       setTimeout(() => setPasswordSuccess(false), 3000);
     },
     onError: (error) => {
-      setPasswordError(error instanceof Error ? error.message : '修改密码失败');
+      setPasswordError(error instanceof Error ? error.message : t('settings:account.failed'));
     },
   });
 
@@ -162,15 +175,15 @@ export const SettingsPage: React.FC = () => {
       refetchAuditLogs();
       addAlert({
         level: 'info',
-        message: '清理任务已执行',
+        message: t('settings:ops.cleanupSuccess'),
         details: result.message,
       });
     },
     onError: (error) => {
       addAlert({
         level: 'error',
-        message: '清理任务执行失败',
-        details: error instanceof Error ? error.message : '未知错误',
+        message: t('settings:ops.cleanupFailed'),
+        details: error instanceof Error ? error.message : t('common:unknownError'),
       });
     },
   });
@@ -182,45 +195,42 @@ export const SettingsPage: React.FC = () => {
       refetchAuditLogs();
       addAlert({
         level: 'info',
-        message: '调度器已重载',
+        message: t('settings:ops.schedulerReloaded'),
         details: result.message,
       });
     },
     onError: (error) => {
       addAlert({
         level: 'error',
-        message: '调度器重载失败',
-        details: error instanceof Error ? error.message : '未知错误',
+        message: t('settings:ops.schedulerReloadFailed'),
+        details: error instanceof Error ? error.message : t('common:unknownError'),
       });
     },
   });
 
-  // 修改密码提交
   const handlePasswordSubmit = () => {
     setPasswordError('');
 
     if (!passwordForm.old_password || !passwordForm.new_password || !passwordForm.confirm_password) {
-      setPasswordError('请填写所有密码字段');
+      setPasswordError(t('settings:account.required'));
       return;
     }
 
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setPasswordError('两次输入的新密码不一致');
+      setPasswordError(t('settings:account.mismatch'));
       return;
     }
 
     if (passwordForm.new_password.length < 6) {
-      setPasswordError('新密码长度至少为6位');
+      setPasswordError(t('settings:account.tooShort'));
       return;
     }
 
     passwordMutation.mutate();
   };
 
-  // 检查是否有变更
   const hasChanges = JSON.stringify(localConfig) !== JSON.stringify(config);
 
-  // 更新本地配置（深拷贝路径上的每一层，避免修改原始引用）
   const updateLocalConfig = (path: string, value: string | number | boolean) => {
     setLocalConfig((prev) => {
       const newConfig = { ...prev };
@@ -238,17 +248,47 @@ export const SettingsPage: React.FC = () => {
     });
   };
 
-  // 保存
   const handleSave = () => {
     saveMutation.mutate(buildConfigUpdateRequest(localConfig));
   };
 
-  // 重置
   const handleReset = () => {
     if (config) {
       setLocalConfig(config);
       setSaveError('');
     }
+  };
+
+  const loadServerDirectory = async (path?: string) => {
+    setDirectoryLoading(true);
+    setDirectoryError('');
+    try {
+      const result = await listServerDirectories(path);
+      setDirectoryList(result);
+    } catch (error) {
+      setDirectoryError(error instanceof Error ? error.message : t('settings:storage.browserLoadFailed', { defaultValue: 'Failed to load server directories' }));
+    } finally {
+      setDirectoryLoading(false);
+    }
+  };
+
+  const openDirectoryPicker = () => {
+    setDirectoryPickerOpen(true);
+    setDirectoryList(null);
+    void loadServerDirectory(localConfig.storage.recordings_path);
+  };
+
+  const closeDirectoryPicker = () => {
+    setDirectoryPickerOpen(false);
+    setDirectoryError('');
+  };
+
+  const selectCurrentDirectory = () => {
+    if (!directoryList?.current_path) {
+      return;
+    }
+    updateLocalConfig('storage.recordings_path', directoryList.current_path);
+    closeDirectoryPicker();
   };
 
   const handleRefreshOperations = () => {
@@ -260,70 +300,54 @@ export const SettingsPage: React.FC = () => {
   const latestAlerts = alerts.slice(0, 6);
 
   const healthStatus = (() => {
-    if (!systemHealth) return { label: '加载中', tone: 'neutral' };
-    if (systemHealth.failed_tasks_24h > 0) return { label: '需要关注', tone: 'warning' };
-    if (systemHealth.running_tasks > 0) return { label: '运行中', tone: 'success' };
-    return { label: '稳定', tone: 'success' };
+    if (!systemHealth) return { label: t('settings:ops.health.loading'), tone: 'neutral' };
+    if (systemHealth.failed_tasks_24h > 0) return { label: t('settings:ops.health.attention'), tone: 'warning' };
+    if (systemHealth.running_tasks > 0) return { label: t('settings:ops.health.running'), tone: 'success' };
+    return { label: t('settings:ops.health.stable'), tone: 'success' };
   })();
 
   const formatDateTime = (value: string | null | undefined) => {
     if (!value) return '-';
-    return new Date(value).toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
+    return formatShortDateTime(value, i18n.language as AppLanguage);
   };
+
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   const renderSection = () => {
     switch (activeSection) {
       case 'general':
         return (
           <div className="settings-section">
-            <h2>{t('settings.general')}</h2>
+            <h2>{t('settings:sections.general')}</h2>
             <div className="setting-item">
               <div className="setting-info">
-                <label>语言</label>
-                <span className="setting-desc">选择界面显示语言</span>
+                <label>{t('settings:general.language')}</label>
+                <span className="setting-desc">{t('settings:general.languageDesc')}</span>
               </div>
               <select
                 className="input setting-control"
                 value={language}
-                onChange={(e) => {
-                  const lang = e.target.value as 'zh-CN' | 'en-US';
-                  setLanguage(lang);
-                  i18n.changeLanguage(lang);
-                }}
+                onChange={(e) => setLanguage(e.target.value as AppLanguage)}
               >
-                <option value="zh-CN">简体中文</option>
-                <option value="en-US">English</option>
+                <option value="zh-CN">{t('settings:general.zh')}</option>
+                <option value="en-US">{t('settings:general.en')}</option>
               </select>
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>服务器地址</label>
-                <span className="setting-desc">Web 服务器监听地址（只读）</span>
+                <label>{t('settings:general.serverHost')}</label>
+                <span className="setting-desc">{t('settings:general.serverHostDesc')}</span>
               </div>
-              <input
-                type="text"
-                className="input setting-control"
-                value={localConfig.server.host}
-                readOnly
-              />
+              <input type="text" className="input setting-control" value={localConfig.server.host} readOnly />
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>服务器端口</label>
-                <span className="setting-desc">Web 服务器监听端口（只读）</span>
+                <label>{t('settings:general.serverPort')}</label>
+                <span className="setting-desc">{t('settings:general.serverPortDesc')}</span>
               </div>
-              <input
-                type="number"
-                className="input setting-control"
-                value={localConfig.server.port}
-                readOnly
-              />
+              <input type="number" className="input setting-control" value={localConfig.server.port} readOnly />
             </div>
           </div>
         );
@@ -331,11 +355,11 @@ export const SettingsPage: React.FC = () => {
       case 'storage':
         return (
           <div className="settings-section">
-            <h2>{t('settings.storage')}</h2>
+            <h2>{t('settings:sections.storage')}</h2>
             <div className="setting-item">
               <div className="setting-info">
-                <label>录制保存路径</label>
-                <span className="setting-desc">录制文件的存储目录</span>
+                <label>{t('settings:storage.path')}</label>
+                <span className="setting-desc">{t('settings:storage.pathDesc')}</span>
               </div>
               <div className="input-with-btn">
                 <input
@@ -344,15 +368,20 @@ export const SettingsPage: React.FC = () => {
                   value={localConfig.storage.recordings_path}
                   onChange={(e) => updateLocalConfig('storage.recordings_path', e.target.value)}
                 />
-                <button className="btn btn-ghost" type="button">
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={openDirectoryPicker}
+                  title={t('settings:storage.browseServer', { defaultValue: 'Browse server directories' })}
+                >
                   <FolderOpen size={16} />
                 </button>
               </div>
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>自动清理</label>
-                <span className="setting-desc">自动删除超过指定天数的录制文件（0 = 禁用）</span>
+                <label>{t('settings:storage.autoCleanup')}</label>
+                <span className="setting-desc">{t('settings:storage.autoCleanupDesc')}</span>
               </div>
               <div className="input-with-suffix">
                 <input
@@ -363,13 +392,13 @@ export const SettingsPage: React.FC = () => {
                   min={0}
                   max={365}
                 />
-                <span className="input-suffix">天</span>
+                <span className="input-suffix">{t('settings:storage.days')}</span>
               </div>
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>最小剩余空间</label>
-                <span className="setting-desc">当磁盘空间低于此值时发出警告</span>
+                <label>{t('settings:storage.minFreeSpace')}</label>
+                <span className="setting-desc">{t('settings:storage.minFreeSpaceDesc')}</span>
               </div>
               <div className="input-with-suffix">
                 <input
@@ -388,11 +417,11 @@ export const SettingsPage: React.FC = () => {
       case 'recording':
         return (
           <div className="settings-section">
-            <h2>{t('settings.recording')}</h2>
+            <h2>{t('settings:sections.recording')}</h2>
             <div className="setting-item">
               <div className="setting-info">
-                <label>默认录制时长</label>
-                <span className="setting-desc">手动录制时的默认时长</span>
+                <label>{t('settings:recording.defaultDuration')}</label>
+                <span className="setting-desc">{t('settings:recording.defaultDurationDesc')}</span>
               </div>
               <div className="input-with-suffix">
                 <input
@@ -403,13 +432,13 @@ export const SettingsPage: React.FC = () => {
                   min={1}
                   max={1440}
                 />
-                <span className="input-suffix">分钟</span>
+                <span className="input-suffix">{t('settings:recording.minutes')}</span>
               </div>
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>录制工具路径</label>
-                <span className="setting-desc">N_m3u8DL-RE 可执行文件路径</span>
+                <label>{t('settings:recording.executable')}</label>
+                <span className="setting-desc">{t('settings:recording.executableDesc')}</span>
               </div>
               <input
                 type="text"
@@ -420,8 +449,8 @@ export const SettingsPage: React.FC = () => {
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>最大重试次数</label>
-                <span className="setting-desc">录制失败时的最大重试次数</span>
+                <label>{t('settings:recording.maxRetry')}</label>
+                <span className="setting-desc">{t('settings:recording.maxRetryDesc')}</span>
               </div>
               <input
                 type="number"
@@ -434,8 +463,8 @@ export const SettingsPage: React.FC = () => {
             </div>
             <div className="setting-item">
               <div className="setting-info">
-                <label>下载线程数</label>
-                <span className="setting-desc">并发下载线程数量</span>
+                <label>{t('settings:recording.threadCount')}</label>
+                <span className="setting-desc">{t('settings:recording.threadCountDesc')}</span>
               </div>
               <input
                 type="number"
@@ -452,58 +481,35 @@ export const SettingsPage: React.FC = () => {
       case 'notification':
         return (
           <div className="settings-section">
-            <h2>{t('settings.notification')}</h2>
-            <div className="setting-item">
-              <div className="setting-info">
-                <label>录制完成通知</label>
-                <span className="setting-desc">当录制任务完成时发送通知</span>
+            <h2>{t('settings:sections.notification')}</h2>
+            {[
+              ['notification.on_complete', localConfig.notification.on_complete, 'complete', 'completeDesc'],
+              ['notification.on_failure', localConfig.notification.on_failure, 'failure', 'failureDesc'],
+              ['notification.disk_warning', localConfig.notification.disk_warning, 'disk', 'diskDesc'],
+            ].map(([path, checked, labelKey, descKey]) => (
+              <div className="setting-item" key={path as string}>
+                <div className="setting-info">
+                  <label>{t(`settings:notification.${labelKey}`)}</label>
+                  <span className="setting-desc">{t(`settings:notification.${descKey}`)}</span>
+                </div>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={checked as boolean}
+                    onChange={(e) => updateLocalConfig(path as string, e.target.checked)}
+                  />
+                  <span className="toggle-slider" />
+                </label>
               </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={localConfig.notification.on_complete}
-                  onChange={(e) => updateLocalConfig('notification.on_complete', e.target.checked)}
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-            <div className="setting-item">
-              <div className="setting-info">
-                <label>录制失败通知</label>
-                <span className="setting-desc">当录制任务失败时发送通知</span>
-              </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={localConfig.notification.on_failure}
-                  onChange={(e) => updateLocalConfig('notification.on_failure', e.target.checked)}
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-            <div className="setting-item">
-              <div className="setting-info">
-                <label>磁盘空间警告</label>
-                <span className="setting-desc">当磁盘空间不足时发送警告</span>
-              </div>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={localConfig.notification.disk_warning}
-                  onChange={(e) => updateLocalConfig('notification.disk_warning', e.target.checked)}
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
+            ))}
           </div>
         );
 
       case 'account':
         return (
           <div className="settings-section">
-            <h2>{t('settings.account')}</h2>
+            <h2>{t('settings:sections.account')}</h2>
 
-            {/* 用户信息 */}
             <div className="account-info-card">
               <div className="account-avatar">
                 <User size={24} />
@@ -511,98 +517,81 @@ export const SettingsPage: React.FC = () => {
               <div className="account-details">
                 <div className="account-name">{user?.nickname || user?.username}</div>
                 <div className="account-meta">
-                  <span className="account-role">{user?.role === 'admin' ? '管理员' : '用户'}</span>
+                  <span className="account-role">{user?.role === 'admin' ? t('common:admin') : t('common:user')}</span>
                   <span className="account-divider">|</span>
                   <span className="account-username">@{user?.username}</span>
                 </div>
               </div>
             </div>
 
-            {/* 修改密码 */}
             <div className="password-section">
               <h3 className="section-subtitle">
                 <Lock size={18} />
-                修改密码
+                {t('settings:account.changePassword')}
               </h3>
 
               {passwordSuccess && (
                 <div className="password-success">
                   <CheckCircle size={18} />
-                  密码修改成功
+                  {t('settings:account.passwordChanged')}
                 </div>
               )}
 
-              {passwordError && (
-                <div className="password-error">
-                  {passwordError}
-                </div>
-              )}
+              {passwordError && <div className="password-error">{passwordError}</div>}
 
               <div className="form-group">
-                <label>当前密码</label>
+                <label>{t('settings:account.currentPassword')}</label>
                 <div className="password-input-wrapper">
                   <input
                     type={showOldPassword ? 'text' : 'password'}
                     className="input"
                     value={passwordForm.old_password}
                     onChange={(e) => setPasswordForm({ ...passwordForm, old_password: e.target.value })}
-                    placeholder="请输入当前密码"
+                    placeholder={t('settings:account.currentPasswordPlaceholder')}
                   />
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    onClick={() => setShowOldPassword(!showOldPassword)}
-                  >
+                  <button type="button" className="password-toggle" onClick={() => setShowOldPassword(!showOldPassword)}>
                     {showOldPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
               </div>
 
               <div className="form-group">
-                <label>新密码</label>
+                <label>{t('settings:account.newPassword')}</label>
                 <div className="password-input-wrapper">
                   <input
                     type={showNewPassword ? 'text' : 'password'}
                     className="input"
                     value={passwordForm.new_password}
                     onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })}
-                    placeholder="请输入新密码（至少6位）"
+                    placeholder={t('settings:account.newPasswordPlaceholder')}
                   />
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    onClick={() => setShowNewPassword(!showNewPassword)}
-                  >
+                  <button type="button" className="password-toggle" onClick={() => setShowNewPassword(!showNewPassword)}>
                     {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
               </div>
 
               <div className="form-group">
-                <label>确认新密码</label>
+                <label>{t('settings:account.confirmPassword')}</label>
                 <input
                   type="password"
                   className="input"
                   value={passwordForm.confirm_password}
                   onChange={(e) => setPasswordForm({ ...passwordForm, confirm_password: e.target.value })}
-                  placeholder="请再次输入新密码"
+                  placeholder={t('settings:account.confirmPasswordPlaceholder')}
                 />
               </div>
 
-              <button
-                className="btn btn-primary"
-                onClick={handlePasswordSubmit}
-                disabled={passwordMutation.isPending}
-              >
+              <button className="btn btn-primary" onClick={handlePasswordSubmit} disabled={passwordMutation.isPending}>
                 {passwordMutation.isPending ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    修改中...
+                    {t('settings:account.changing')}
                   </>
                 ) : (
                   <>
                     <Lock size={16} />
-                    修改密码
+                    {t('settings:account.change')}
                   </>
                 )}
               </button>
@@ -615,80 +604,55 @@ export const SettingsPage: React.FC = () => {
           <div className="settings-section">
             <div className="section-header-row">
               <div>
-                <h2>运行维护</h2>
-                <p className="section-subtext">查看系统健康、实时异常与关键操作审计记录</p>
+                <h2>{t('settings:ops.title')}</h2>
+                <p className="section-subtext">{t('settings:ops.subtitle')}</p>
               </div>
               <div className="section-header-actions">
                 <button className="btn btn-ghost" onClick={handleRefreshOperations}>
                   <RefreshCw size={16} />
-                  刷新
+                  {t('settings:ops.refresh')}
                 </button>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => reloadMutation.mutate()}
-                  disabled={reloadMutation.isPending}
-                >
+                <button className="btn btn-ghost" onClick={() => reloadMutation.mutate()} disabled={reloadMutation.isPending}>
                   {reloadMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Activity size={16} />}
-                  重载调度器
+                  {t('settings:ops.reloadScheduler')}
                 </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => cleanupMutation.mutate()}
-                  disabled={cleanupMutation.isPending}
-                >
+                <button className="btn btn-primary" onClick={() => cleanupMutation.mutate()} disabled={cleanupMutation.isPending}>
                   {cleanupMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <TimerReset size={16} />}
-                  执行清理
+                  {t('settings:ops.cleanup')}
                 </button>
               </div>
             </div>
 
             <div className="ops-summary-grid">
               <div className={`ops-summary-card ${healthStatus.tone}`}>
-                <div className="ops-summary-title">
-                  <Server size={18} />
-                  系统状态
-                </div>
+                <div className="ops-summary-title"><Server size={18} />{t('settings:ops.status')}</div>
                 <div className="ops-summary-value">{healthStatus.label}</div>
                 <div className="ops-summary-meta">
-                  {isHealthLoading ? '正在同步健康数据...' : `最近审计: ${formatDateTime(systemHealth?.last_audit_at)}`}
+                  {isHealthLoading ? t('settings:ops.syncing') : t('settings:ops.lastAudit', { time: formatDateTime(systemHealth?.last_audit_at) })}
                 </div>
               </div>
               <div className="ops-summary-card">
-                <div className="ops-summary-title">
-                  <Clapperboard size={18} />
-                  录制任务
-                </div>
+                <div className="ops-summary-title"><Clapperboard size={18} />{t('settings:ops.recordingTasks')}</div>
                 <div className="ops-summary-value">{systemHealth?.running_tasks ?? '-'}</div>
-                <div className="ops-summary-meta">运行中任务 / 24h 失败 {systemHealth?.failed_tasks_24h ?? '-'}</div>
+                <div className="ops-summary-meta">{t('settings:ops.runningFailed', { value: systemHealth?.failed_tasks_24h ?? '-' })}</div>
               </div>
               <div className="ops-summary-card">
-                <div className="ops-summary-title">
-                  <Calendar size={18} />
-                  调度计划
-                </div>
-                <div className="ops-summary-value">
-                  {systemHealth?.enabled_schedules ?? '-'}/{systemHealth?.schedules_total ?? '-'}
-                </div>
-                <div className="ops-summary-meta">启用数 / 总计划数</div>
+                <div className="ops-summary-title"><Calendar size={18} />{t('settings:ops.schedules')}</div>
+                <div className="ops-summary-value">{systemHealth?.enabled_schedules ?? '-'}/{systemHealth?.schedules_total ?? '-'}</div>
+                <div className="ops-summary-meta">{t('settings:ops.enabledTotal')}</div>
               </div>
               <div className="ops-summary-card">
-                <div className="ops-summary-title">
-                  <User size={18} />
-                  访问面
-                </div>
+                <div className="ops-summary-title"><User size={18} />{t('settings:ops.access')}</div>
                 <div className="ops-summary-value">{systemHealth?.users_total ?? '-'}</div>
-                <div className="ops-summary-meta">用户数 / 频道 {systemHealth?.channels_total ?? '-'}</div>
+                <div className="ops-summary-meta">{t('settings:ops.usersChannels', { value: systemHealth?.channels_total ?? '-' })}</div>
               </div>
             </div>
 
             <div className="ops-grid">
               <section className="ops-panel">
                 <div className="ops-panel-header">
-                  <h3>
-                    <ShieldAlert size={18} />
-                    实时异常
-                  </h3>
-                  <span className="ops-panel-meta">来自当前会话 WebSocket 告警流</span>
+                  <h3><ShieldAlert size={18} />{t('settings:ops.alerts')}</h3>
+                  <span className="ops-panel-meta">{t('settings:ops.alertsMeta')}</span>
                 </div>
                 {latestAlerts.length > 0 ? (
                   <div className="ops-alert-list">
@@ -704,59 +668,51 @@ export const SettingsPage: React.FC = () => {
                     ))}
                   </div>
                 ) : (
-                  <div className="ops-empty">当前会话还没有收到系统告警。</div>
+                  <div className="ops-empty">{t('settings:ops.alertsEmpty')}</div>
                 )}
               </section>
 
               <section className="ops-panel">
                 <div className="ops-panel-header">
-                  <h3>
-                    <FileText size={18} />
-                    运维 SOP
-                  </h3>
-                  <span className="ops-panel-meta">结合仓库文档执行发布与应急操作</span>
+                  <h3><FileText size={18} />{t('settings:ops.runbook')}</h3>
+                  <span className="ops-panel-meta">{t('settings:ops.runbookMeta')}</span>
                 </div>
                 <div className="ops-runbook-list">
                   <div className="ops-runbook-item">
-                    <div className="ops-runbook-title">首次部署</div>
-                    <div className="ops-runbook-desc">设置 `IPTV_JWT_SECRET`，确认初始管理员密码，并首次登录后立即改密。</div>
+                    <div className="ops-runbook-title">{t('settings:ops.firstDeploy')}</div>
+                    <div className="ops-runbook-desc">{t('settings:ops.firstDeployDesc')}</div>
                   </div>
                   <div className="ops-runbook-item">
-                    <div className="ops-runbook-title">发布前检查</div>
-                    <div className="ops-runbook-desc">执行 `docs/release-checklist.md` 中的构建、回滚与 WebSocket 冒烟检查。</div>
+                    <div className="ops-runbook-title">{t('settings:ops.preRelease')}</div>
+                    <div className="ops-runbook-desc">{t('settings:ops.preReleaseDesc')}</div>
                   </div>
                   <div className="ops-runbook-item">
-                    <div className="ops-runbook-title">异常处置</div>
-                    <div className="ops-runbook-desc">凭审计日志定位变更，必要时轮换密码和 JWT 密钥，并核对 proxy 访问风险。</div>
+                    <div className="ops-runbook-title">{t('settings:ops.incident')}</div>
+                    <div className="ops-runbook-desc">{t('settings:ops.incidentDesc')}</div>
                   </div>
                 </div>
-                <div className="ops-doc-hint">
-                  详细文档：`docs/security-operations.md`、`docs/release-checklist.md`、`docs/operations-runbook.md`
-                </div>
+                <div className="ops-doc-hint">{t('settings:ops.docs')}</div>
               </section>
             </div>
 
             <section className="ops-panel">
               <div className="ops-panel-header">
-                <h3>
-                  <ScrollText size={18} />
-                  审计日志
-                </h3>
-                <span className="ops-panel-meta">最近 200 条关键操作记录</span>
+                <h3><ScrollText size={18} />{t('settings:ops.audit')}</h3>
+                <span className="ops-panel-meta">{t('settings:ops.auditMeta')}</span>
               </div>
               {isAuditLoading ? (
-                <div className="ops-empty">正在加载审计日志...</div>
+                <div className="ops-empty">{t('settings:ops.auditLoading')}</div>
               ) : auditLogs && auditLogs.length > 0 ? (
                 <div className="audit-table-wrap">
                   <table className="audit-table">
                     <thead>
                       <tr>
-                        <th>时间</th>
-                        <th>用户</th>
-                        <th>角色</th>
-                        <th>动作</th>
-                        <th>资源</th>
-                        <th>详情</th>
+                        <th>{t('settings:ops.columns.time')}</th>
+                        <th>{t('settings:ops.columns.user')}</th>
+                        <th>{t('settings:ops.columns.role')}</th>
+                        <th>{t('settings:ops.columns.action')}</th>
+                        <th>{t('settings:ops.columns.resource')}</th>
+                        <th>{t('settings:ops.columns.details')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -774,7 +730,7 @@ export const SettingsPage: React.FC = () => {
                   </table>
                 </div>
               ) : (
-                <div className="ops-empty">暂无审计记录。</div>
+                <div className="ops-empty">{t('settings:ops.auditEmpty')}</div>
               )}
             </section>
           </div>
@@ -783,17 +739,12 @@ export const SettingsPage: React.FC = () => {
       case 'about':
         return (
           <div className="settings-section">
-            <h2>{t('settings.about')}</h2>
+            <h2>{t('settings:sections.about')}</h2>
             <div className="about-card">
               <div className="about-logo">
                 <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <rect width="48" height="48" rx="12" fill="url(#about-gradient)" />
-                  <path
-                    d="M12 15H36M12 24H30M12 33H24"
-                    stroke="white"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                  />
+                  <path d="M12 15H36M12 24H30M12 33H24" stroke="white" strokeWidth="3" strokeLinecap="round" />
                   <circle cx="36" cy="33" r="6" fill="white" fillOpacity="0.9" />
                   <defs>
                     <linearGradient id="about-gradient" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
@@ -805,28 +756,17 @@ export const SettingsPage: React.FC = () => {
               </div>
               <div className="about-info">
                 <h3>IPTV Recorder</h3>
-                <p className="version">版本 0.1.0</p>
-                <p className="description">
-                  基于 Rust 的 IPTV M3U 管理与定时录制系统
-                </p>
+                <p className="version">{t('settings:about.version')}</p>
+                <p className="description">{t('settings:about.desc')}</p>
               </div>
             </div>
             <div className="about-links">
-              <span className="about-link disabled">
-                <Globe size={18} />
-                <span>官方网站</span>
-              </span>
-              <span className="about-link disabled">
-                <Zap size={18} />
-                <span>检查更新</span>
-              </span>
-              <span className="about-link disabled">
-                <HardDrive size={18} />
-                <span>GitHub</span>
-              </span>
+              <span className="about-link disabled"><Globe size={18} /><span>{t('settings:about.website')}</span></span>
+              <span className="about-link disabled"><Zap size={18} /><span>{t('settings:about.checkUpdate')}</span></span>
+              <span className="about-link disabled"><HardDrive size={18} /><span>GitHub</span></span>
             </div>
             <div className="tech-stack">
-              <h4>技术栈</h4>
+              <h4>{t('settings:about.techStack')}</h4>
               <div className="tech-tags">
                 <span className="tech-tag">Rust</span>
                 <span className="tech-tag">Axum</span>
@@ -842,17 +782,14 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <div className="settings-page">
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title">
-          <h1>{t('menu.settings')}</h1>
-          <p className="page-subtitle">系统配置与偏好设置</p>
+          <h1>{t('settings:title')}</h1>
+          <p className="page-subtitle">{t('settings:subtitle')}</p>
         </div>
       </div>
 
-      {/* Settings Layout */}
       <div className="settings-layout">
-        {/* Sidebar Navigation */}
         <nav className="settings-nav card">
           {sections.map((section) => (
             <button
@@ -867,7 +804,6 @@ export const SettingsPage: React.FC = () => {
           ))}
         </nav>
 
-        {/* Content Area */}
         <div className="settings-content card">
           {isLoading ? (
             <div className="loading-state">
@@ -879,18 +815,11 @@ export const SettingsPage: React.FC = () => {
             <>
               {renderSection()}
 
-              {/* Save Actions */}
               {activeSection !== 'about' && activeSection !== 'account' && activeSection !== 'operations' && (
                 <div className="settings-actions">
-                  {saveError && (
-                    <div className="password-error">{saveError}</div>
-                  )}
+                  {saveError && <div className="password-error">{saveError}</div>}
                   <div className="settings-actions-buttons">
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleSave}
-                      disabled={!hasChanges || saveMutation.isPending}
-                    >
+                    <button className="btn btn-primary" onClick={handleSave} disabled={!hasChanges || saveMutation.isPending}>
                       {saveMutation.isPending ? (
                         <Loader2 size={16} className="animate-spin" />
                       ) : saveSuccess ? (
@@ -898,15 +827,11 @@ export const SettingsPage: React.FC = () => {
                       ) : (
                         <Save size={16} />
                       )}
-                      {saveMutation.isPending ? t('settings.saving') : saveSuccess ? t('settings.saved') : t('settings.saveSettings')}
+                      {saveMutation.isPending ? t('settings:saving') : saveSuccess ? t('settings:saved') : t('settings:saveSettings')}
                     </button>
-                    <button
-                      className="btn btn-ghost"
-                      onClick={handleReset}
-                      disabled={!hasChanges}
-                    >
+                    <button className="btn btn-ghost" onClick={handleReset} disabled={!hasChanges}>
                       <RotateCcw size={16} />
-                      {t('settings.resetDefaults')}
+                      {t('settings:resetDefaults')}
                     </button>
                   </div>
                 </div>
@@ -915,6 +840,84 @@ export const SettingsPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {directoryPickerOpen && (
+        <div className="modal-overlay" onClick={closeDirectoryPicker}>
+          <div className="modal-content directory-picker-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{t('settings:storage.browserTitle', { defaultValue: 'Select Server Directory' })}</h2>
+              <button className="modal-close" type="button" onClick={closeDirectoryPicker}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body directory-picker-body">
+              <div className="directory-current-path">
+                <span>{t('settings:storage.currentServerPath', { defaultValue: 'Current server path' })}</span>
+                <code>{directoryList?.current_path || t('settings:storage.serverRoots', { defaultValue: 'Server roots' })}</code>
+              </div>
+
+              <div className="directory-toolbar">
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  onClick={() => directoryList?.parent_path && loadServerDirectory(directoryList.parent_path)}
+                  disabled={directoryLoading || !directoryList?.parent_path}
+                >
+                  {t('settings:storage.upDirectory', { defaultValue: 'Up' })}
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  onClick={() => loadServerDirectory()}
+                  disabled={directoryLoading}
+                >
+                  {t('settings:storage.rootDirectory', { defaultValue: 'Roots' })}
+                </button>
+              </div>
+
+              {directoryError && <div className="directory-error">{directoryError}</div>}
+              {directoryLoading ? (
+                <div className="directory-loading">
+                  <Loader2 size={18} className="animate-spin" />
+                  {t('common:loading')}
+                </div>
+              ) : (
+                <div className="directory-list">
+                  {directoryList?.entries.length ? (
+                    directoryList.entries.map((entry) => (
+                      <button
+                        className="directory-row"
+                        type="button"
+                        key={entry.path}
+                        onClick={() => loadServerDirectory(entry.path)}
+                        title={entry.path}
+                      >
+                        <FolderOpen size={16} />
+                        <span>{entry.name}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="directory-empty">{t('settings:storage.noDirectories', { defaultValue: 'No child directories' })}</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" type="button" onClick={closeDirectoryPicker}>
+                {t('common:cancel')}
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={selectCurrentDirectory}
+                disabled={directoryLoading || !directoryList?.current_path}
+              >
+                {t('settings:storage.useCurrentDirectory', { defaultValue: 'Use Current Directory' })}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

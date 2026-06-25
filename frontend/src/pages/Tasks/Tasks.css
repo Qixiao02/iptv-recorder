@@ -2,6 +2,10 @@
   animation: fade-in 0.4s ease-out;
 }
 
+.tasks-page .page-header {
+  padding-top: 4px;
+}
+
 .page-actions {
   display: flex;
   align-items: center;
@@ -37,7 +41,7 @@
 .stats-bar {
   display: flex;
   gap: 24px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   padding: 16px 20px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -77,7 +81,7 @@
 .filter-tabs {
   display: flex;
   gap: 4px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   padding: 4px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);

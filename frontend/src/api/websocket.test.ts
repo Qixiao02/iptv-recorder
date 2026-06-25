@@ -82,4 +82,59 @@ describe('WebSocketClient', () => {
     expect(MockWebSocket.instances).toHaveLength(2);
     unsubscribe();
   });
+
+  describe('VITE_API_BASE_URL resolution', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('uses window.location.host when VITE_API_BASE_URL is a relative path like /api', () => {
+      vi.stubEnv('VITE_API_BASE_URL', '/api');
+      localStorage.setItem(
+        'auth-storage',
+        JSON.stringify({ state: { token: 'token-123' } }),
+      );
+
+      const client = new WebSocketClient();
+      client.connect();
+
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0].url).toContain(
+        `${window.location.host}/ws`,
+      );
+    });
+
+    it('uses the absolute URL host when VITE_API_BASE_URL is a full URL', () => {
+      vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com');
+      localStorage.setItem(
+        'auth-storage',
+        JSON.stringify({ state: { token: 'token-123' } }),
+      );
+
+      const client = new WebSocketClient();
+      client.connect();
+
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0].url).toContain('api.example.com/ws');
+      expect(MockWebSocket.instances[0].url).not.toContain(
+        `${window.location.host}/ws`,
+      );
+    });
+
+    it('falls back to window.location.host when VITE_API_BASE_URL is undefined', () => {
+      vi.stubEnv('VITE_API_BASE_URL', '');
+      localStorage.setItem(
+        'auth-storage',
+        JSON.stringify({ state: { token: 'token-123' } }),
+      );
+
+      const client = new WebSocketClient();
+      client.connect();
+
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0].url).toContain(
+        `${window.location.host}/ws`,
+      );
+    });
+  });
 });

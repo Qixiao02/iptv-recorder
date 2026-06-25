@@ -1,4 +1,5 @@
 import React from 'react';
+import i18n from '@/i18n';
 
 interface Props {
   children: React.ReactNode;
@@ -22,6 +23,10 @@ class ErrorBoundary extends React.Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const title = i18n.t('components:errorBoundary.title', { defaultValue: 'Page Error' });
+      const unknown = i18n.t('components:errorBoundary.unknown', { defaultValue: 'Unknown error' });
+      const retry = i18n.t('components:errorBoundary.retry', { defaultValue: 'Retry' });
+
       return (
         <div style={{
           display: 'flex',
@@ -32,9 +37,9 @@ class ErrorBoundary extends React.Component<Props, State> {
           padding: '24px',
           textAlign: 'center',
         }}>
-          <h2 style={{ marginBottom: '12px' }}>页面发生错误</h2>
+          <h2 style={{ marginBottom: '12px' }}>{title}</h2>
           <p style={{ color: '#666', marginBottom: '16px' }}>
-            {this.state.error?.message || '未知错误'}
+            {this.state.error?.message || unknown}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
@@ -46,7 +51,7 @@ class ErrorBoundary extends React.Component<Props, State> {
               background: '#fff',
             }}
           >
-            重试
+            {retry}
           </button>
         </div>
       );

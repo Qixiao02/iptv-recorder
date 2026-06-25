@@ -1,5 +1,7 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, CheckCircle, XCircle, X } from 'lucide-react';
+import type { ToastItem } from './useToast';
 import './ConfirmDialog.css';
 
 interface ConfirmDialogProps {
@@ -27,11 +29,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   title,
   message,
-  confirmText = '确认',
-  cancelText = '取消',
+  confirmText,
+  cancelText,
   type = 'warning',
   isLoading = false,
 }) => {
+  const { t } = useTranslation(['common']);
+
   if (!isOpen) return null;
 
   const handleConfirm = () => {
@@ -55,19 +59,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         <p className="confirm-message">{message}</p>
 
         <div className="confirm-actions">
-          <button
-            className="btn btn-ghost"
-            onClick={onClose}
-            disabled={isLoading}
-          >
-            {cancelText}
+          <button className="btn btn-ghost" onClick={onClose} disabled={isLoading}>
+            {cancelText ?? t('common:cancel')}
           </button>
           <button
             className={`btn btn-${type === 'danger' ? 'danger' : 'primary'}`}
             onClick={handleConfirm}
             disabled={isLoading}
           >
-            {isLoading ? '处理中...' : confirmText}
+            {isLoading ? t('common:processing') : confirmText ?? t('common:confirm')}
           </button>
         </div>
       </div>
@@ -75,18 +75,13 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   );
 };
 
-// Toast 通知组件
 interface ToastProps {
   message: string;
   type?: 'success' | 'error' | 'info' | 'warning';
   onClose: () => void;
 }
 
-export const Toast: React.FC<ToastProps> = ({
-  message,
-  type = 'info',
-  onClose,
-}) => {
+export const Toast: React.FC<ToastProps> = ({ message, type = 'info', onClose }) => {
   return (
     <div className={`toast toast-${type}`}>
       <span className="toast-message">{message}</span>
@@ -97,30 +92,8 @@ export const Toast: React.FC<ToastProps> = ({
   );
 };
 
-// Toast 容器 Hook
-export const useToast = () => {
-  const [toasts, setToasts] = React.useState<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' | 'warning' }>>([]);
-
-  const showToast = React.useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-
-    // 3秒后自动关闭
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
-  }, []);
-
-  const removeToast = React.useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  return { toasts, showToast, removeToast };
-};
-
-// Toast 容器组件
 export const ToastContainer: React.FC<{
-  toasts: Array<{ id: number; message: string; type: 'success' | 'error' | 'info' | 'warning' }>;
+  toasts: ToastItem[];
   onRemove: (id: number) => void;
 }> = ({ toasts, onRemove }) => {
   return (
@@ -138,3 +111,4 @@ export const ToastContainer: React.FC<{
 };
 
 export default ConfirmDialog;
+

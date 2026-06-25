@@ -95,6 +95,76 @@ async fn ensure_legacy_compatibility(pool: &Db) -> Result<()> {
         tracing::info!("Added missing playback_strategy column to legacy channels table");
     }
 
+    let fixed_private_sources = sqlx::query(
+        r#"
+        UPDATE channels
+        SET source_visibility = 'private_server_only'
+        WHERE source_visibility = 'public'
+          AND (
+            lower(url) LIKE 'http://localhost/%'
+            OR lower(url) LIKE 'https://localhost/%'
+            OR url LIKE 'http://10.%'
+            OR url LIKE 'https://10.%'
+            OR url LIKE 'http://192.168.%'
+            OR url LIKE 'https://192.168.%'
+            OR url LIKE 'http://127.%'
+            OR url LIKE 'https://127.%'
+            OR url LIKE 'http://169.254.%'
+            OR url LIKE 'https://169.254.%'
+            OR url LIKE 'http://100.6[4-9].%'
+            OR url LIKE 'http://100.[7-9][0-9].%'
+            OR url LIKE 'http://100.1[0-1][0-9].%'
+            OR url LIKE 'http://100.12[0-7].%'
+            OR url LIKE 'https://100.6[4-9].%'
+            OR url LIKE 'https://100.[7-9][0-9].%'
+            OR url LIKE 'https://100.1[0-1][0-9].%'
+            OR url LIKE 'https://100.12[0-7].%'
+            OR url LIKE 'http://172.1[6-9].%'
+            OR url LIKE 'http://172.2[0-9].%'
+            OR url LIKE 'http://172.3[0-1].%'
+            OR url LIKE 'https://172.1[6-9].%'
+            OR url LIKE 'https://172.2[0-9].%'
+            OR url LIKE 'https://172.3[0-1].%'
+            OR lower(url) LIKE 'http://[fc%'
+            OR lower(url) LIKE 'https://[fc%'
+            OR lower(url) LIKE 'http://[fd%'
+            OR lower(url) LIKE 'https://[fd%'
+            OR lower(url) LIKE 'http://[fe80:%'
+            OR lower(url) LIKE 'https://[fe80:%'
+            OR lower(url) LIKE 'http://[::1]%'
+            OR lower(url) LIKE 'https://[::1]%'
+          )
+        "#,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if fixed_private_sources > 0 {
+        tracing::info!(
+            "Marked {} existing private-address channels as private_server_only",
+            fixed_private_sources
+        );
+    }
+
+    let normalized_output_templates = sqlx::query(
+        r#"
+        UPDATE schedules
+        SET output_template = substr(output_template, 1, length(output_template) - 4)
+        WHERE output_template LIKE '%.mp4'
+        "#,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if normalized_output_templates > 0 {
+        tracing::info!(
+            "Normalized {} legacy schedule output templates by removing .mp4 suffix",
+            normalized_output_templates
+        );
+    }
+
     Ok(())
 }
 

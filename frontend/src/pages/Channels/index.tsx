@@ -1,7 +1,8 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getChannels, getChannelGroups, deleteChannel, testChannel } from '@/api/channels';
+import { batchDeleteChannels, getChannels, getChannelGroups, deleteChannel, testChannel } from '@/api/channels';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import {
   Search,
   Plus,
@@ -30,11 +31,13 @@ const ChannelModal = lazy(() => import('@/components/ChannelModal'));
 const PlayerModal = lazy(() => import('@/components/PlayerModal'));
 const EpgImportModal = lazy(() => import('@/components/EpgImportModal'));
 const EpgProgramsModal = lazy(() => import('@/components/EpgProgramsModal'));
+const ConfirmDialog = lazy(() => import('@/components/ConfirmDialog'));
 
 type ViewMode = 'table' | 'card';
 
 export const Channels: React.FC = () => {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['channels', 'common']);
+  const isI18nReady = useI18nNamespace(['channels', 'common']);
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,25 +52,22 @@ export const Channels: React.FC = () => {
   const [playerChannel, setPlayerChannel] = useState<Channel | null>(null);
   const [showEpgImportModal, setShowEpgImportModal] = useState(false);
   const [epgChannel, setEpgChannel] = useState<Channel | null>(null);
-
-  // 分页状态
+  const [deletingChannel, setDeletingChannel] = useState<Channel | null>(null);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-
-  // 搜索防抖
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-      setPage(1); // 搜索时重置到第一页
+      setPage(1);
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // 当分组改变时重置页码
   useEffect(() => {
-    setPage(1);
+    queueMicrotask(() => setPage(1));
   }, [selectedGroup]);
 
   const { data: channelsData, isLoading } = useQuery({
@@ -93,9 +93,7 @@ export const Channels: React.FC = () => {
   });
 
   const batchDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      for (const id of ids) await deleteChannel(id);
-    },
+    mutationFn: batchDeleteChannels,
     onSuccess: () => {
       setSelectedChannels(new Set());
       queryClient.invalidateQueries({ queryKey: ['channels'] });
@@ -103,8 +101,24 @@ export const Channels: React.FC = () => {
   });
 
   const handleBatchDelete = () => {
-    if (!window.confirm(`确认删除选中的 ${selectedChannels.size} 个频道？`)) return;
+    if (selectedChannels.size === 0) return;
+    setShowBatchDeleteConfirm(true);
+  };
+
+  const handleConfirmBatchDelete = () => {
     batchDeleteMutation.mutate(Array.from(selectedChannels));
+    setShowBatchDeleteConfirm(false);
+  };
+
+  const handleConfirmChannelDelete = () => {
+    if (!deletingChannel) return;
+    deleteMutation.mutate(deletingChannel.id);
+    setDeletingChannel(null);
+  };
+
+  const handleImportCompleted = () => {
+    setPage(1);
+    setSelectedChannels(new Set());
   };
 
   const testMutation = useMutation({
@@ -118,10 +132,9 @@ export const Channels: React.FC = () => {
     },
   });
 
-  // 一键测试当前页频道
   const handleBatchTest = async () => {
     const channelsToTest = selectedChannels.size > 0
-      ? channelsData?.items?.filter(c => selectedChannels.has(c.id)) || []
+      ? channelsData?.items?.filter((channel) => selectedChannels.has(channel.id)) || []
       : channelsData?.items || [];
 
     if (channelsToTest.length === 0) return;
@@ -135,9 +148,8 @@ export const Channels: React.FC = () => {
       try {
         await testChannel(channel.id);
       } catch {
-        // 忽略单个测试错误
+        // Ignore individual test errors and continue testing the rest.
       }
-      // 每次测试后刷新列表
       queryClient.invalidateQueries({ queryKey: ['channels'] });
     }
 
@@ -145,7 +157,6 @@ export const Channels: React.FC = () => {
     setTestProgress({ current: 0, total: 0 });
   };
 
-  // 播放频道
   const handlePlay = (channel: Channel) => {
     setPlayerChannel(channel);
   };
@@ -154,7 +165,7 @@ export const Channels: React.FC = () => {
     if (selectedChannels.size === channelsData?.items?.length) {
       setSelectedChannels(new Set());
     } else {
-      setSelectedChannels(new Set(channelsData?.items?.map((c) => c.id) || []));
+      setSelectedChannels(new Set(channelsData?.items?.map((channel) => channel.id) || []));
     }
   };
 
@@ -185,30 +196,29 @@ export const Channels: React.FC = () => {
   const getStatusBadge = (status: Channel['status']) => {
     switch (status) {
       case 'online':
-        return <span className="badge badge-success"><CircleCheck size={12} />在线</span>;
+        return <span className="badge badge-success"><CircleCheck size={12} />{t('channels:status.online')}</span>;
       case 'offline':
-        return <span className="badge badge-error"><CircleX size={12} />离线</span>;
+        return <span className="badge badge-error"><CircleX size={12} />{t('channels:status.offline')}</span>;
       case 'slow':
-        return <span className="badge badge-warning"><CircleCheck size={12} />缓慢</span>;
+        return <span className="badge badge-warning"><CircleCheck size={12} />{t('channels:status.slow')}</span>;
       default:
-        return <span className="badge badge-neutral">未知</span>;
+        return <span className="badge badge-neutral">{t('channels:status.unknown')}</span>;
     }
   };
 
   const getSourceBadge = (channel: Channel) => {
     if (channel.playback_strategy === 'record_only') {
-      return <span className="badge badge-neutral">仅录制</span>;
+      return <span className="badge badge-neutral">{t('channels:source.recordOnly')}</span>;
     }
     if (channel.source_visibility === 'private_server_only') {
-      return <span className="badge badge-warning">私有源</span>;
+      return <span className="badge badge-warning">{t('channels:source.private')}</span>;
     }
-    return <span className="badge badge-success">公网源</span>;
+    return <span className="badge badge-success">{t('channels:source.public')}</span>;
   };
 
-  // 分页控制
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
-    setSelectedChannels(new Set()); // 切换页面时清空选择
+    setSelectedChannels(new Set());
   };
 
   const renderPagination = () => {
@@ -217,7 +227,7 @@ export const Channels: React.FC = () => {
     const pages = [];
     const maxVisiblePages = 5;
     let startPage = Math.max(1, page - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(channelsData.total_pages, startPage + maxVisiblePages - 1);
+    const endPage = Math.min(channelsData.total_pages, startPage + maxVisiblePages - 1);
 
     if (endPage - startPage + 1 < maxVisiblePages) {
       startPage = Math.max(1, endPage - maxVisiblePages + 1);
@@ -244,13 +254,13 @@ export const Channels: React.FC = () => {
           </>
         )}
 
-        {pages.map(p => (
+        {pages.map((pageNumber) => (
           <button
-            key={p}
-            className={`pagination-btn ${p === page ? 'active' : ''}`}
-            onClick={() => handlePageChange(p)}
+            key={pageNumber}
+            className={`pagination-btn ${pageNumber === page ? 'active' : ''}`}
+            onClick={() => handlePageChange(pageNumber)}
           >
-            {p}
+            {pageNumber}
           </button>
         ))}
 
@@ -279,14 +289,17 @@ export const Channels: React.FC = () => {
             setPage(1);
           }}
         >
-          <option value={10}>10 条/页</option>
-          <option value={20}>20 条/页</option>
-          <option value={50}>50 条/页</option>
-          <option value={100}>100 条/页</option>
+          {[10, 20, 50, 100].map((size) => (
+            <option key={size} value={size}>{t('channels:pageSize', { count: size })}</option>
+          ))}
         </select>
       </div>
     );
   };
+
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   const shouldRenderImportModal = showImportModal;
   const shouldRenderChannelModal = showChannelModal || editingChannel !== null;
@@ -296,38 +309,36 @@ export const Channels: React.FC = () => {
 
   return (
     <div className="channels-page">
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title">
-          <h1>{t('menu.channels')}</h1>
+          <h1>{t('channels:title')}</h1>
           <p className="page-subtitle">
-            共 {channelsData?.total || 0} 个频道
+            {t('channels:subtitle', { count: channelsData?.total || 0 })}
           </p>
         </div>
         <div className="page-actions">
           <button className="btn btn-ghost" onClick={() => setShowImportModal(true)}>
             <Upload size={16} />
-            导入 M3U
+            {t('channels:importM3u')}
           </button>
           <button className="btn btn-ghost" onClick={() => setShowEpgImportModal(true)}>
             <CalendarDays size={16} />
-            导入 EPG
+            {t('channels:importEpg')}
           </button>
           <button className="btn btn-primary" onClick={() => setShowChannelModal(true)}>
             <Plus size={16} />
-            {t('common.add')}
+            {t('channels:add')}
           </button>
         </div>
       </div>
 
-      {/* Toolbar */}
       <div className="toolbar card">
         <div className="toolbar-left">
           <div className="search-box">
             <Search size={16} />
             <input
               type="text"
-              placeholder={t('common.search')}
+              placeholder={t('common:search')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input"
@@ -341,7 +352,7 @@ export const Channels: React.FC = () => {
               onChange={(e) => setSelectedGroup(e.target.value)}
               className="input"
             >
-              <option value="all">全部分组</option>
+              <option value="all">{t('channels:allGroups')}</option>
               {groups?.map((group) => (
                 <option key={group} value={group}>
                   {group}
@@ -358,12 +369,12 @@ export const Channels: React.FC = () => {
             {batchTesting ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                测试中 {testProgress.current}/{testProgress.total}
+                {t('channels:batchTesting', { current: testProgress.current, total: testProgress.total })}
               </>
             ) : (
               <>
                 <Zap size={16} />
-                一键测试
+                {t('channels:batchTest')}
               </>
             )}
           </button>
@@ -387,26 +398,26 @@ export const Channels: React.FC = () => {
         </div>
       </div>
 
-      {/* Batch Actions */}
       {selectedChannels.size > 0 && (
         <div className="batch-actions animate-fade-in">
-          <span className="batch-count">已选择 {selectedChannels.size} 个频道</span>
+          <span className="batch-count">{t('channels:selectedCount', { count: selectedChannels.size })}</span>
           <div className="batch-buttons">
-            <button className="btn btn-ghost btn-sm">批量录制</button>
+            <button className="btn btn-ghost btn-sm">{t('channels:batchRecord')}</button>
             <button
               className="btn btn-ghost btn-sm danger"
               onClick={handleBatchDelete}
               disabled={batchDeleteMutation.isPending}
-            >批量删除</button>
+            >
+              {t('channels:batchDelete')}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Content */}
       {isLoading ? (
         <div className="loading-grid">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="skeleton-card animate-shimmer" />
+          {[1, 2, 3, 4, 5, 6].map((item) => (
+            <div key={item} className="skeleton-card animate-shimmer" />
           ))}
         </div>
       ) : viewMode === 'table' ? (
@@ -421,19 +432,19 @@ export const Channels: React.FC = () => {
                     onChange={handleSelectAll}
                   />
                 </th>
-                <th className="col-channel">频道</th>
-                <th className="col-url">流地址</th>
-                <th className="col-group">分组</th>
-                <th className="col-status">状态</th>
-                <th className="col-actions">操作</th>
+                <th className="col-channel">{t('channels:table.channel')}</th>
+                <th className="col-url">{t('channels:table.url')}</th>
+                <th className="col-group">{t('channels:table.group')}</th>
+                <th className="col-status">{t('channels:table.status')}</th>
+                <th className="col-actions">{t('channels:table.actions')}</th>
               </tr>
             </thead>
             <tbody>
-              {channelsData?.items?.map((channel, idx) => (
+              {channelsData?.items?.map((channel, index) => (
                 <tr
                   key={channel.id}
                   className={`stagger-item ${selectedChannels.has(channel.id) ? 'selected' : ''}`}
-                  style={{ animationDelay: `${idx * 0.03}s` }}
+                  style={{ animationDelay: `${index * 0.03}s` }}
                 >
                   <td className="col-checkbox">
                     <input
@@ -468,14 +479,14 @@ export const Channels: React.FC = () => {
                     <div className="actions-cell">
                       <button
                         className="action-btn"
-                        title="播放"
+                        title={t('channels:actions.play')}
                         onClick={() => handlePlay(channel)}
                       >
                         <CirclePlay size={16} />
                       </button>
                       <button
                         className="action-btn"
-                        title="测试连接"
+                        title={t('channels:actions.test')}
                         onClick={() => {
                           setTestingId(channel.id);
                           testMutation.mutate(channel.id);
@@ -490,22 +501,22 @@ export const Channels: React.FC = () => {
                       </button>
                       <button
                         className="action-btn"
-                        title="节目单"
+                        title={t('channels:actions.epg')}
                         onClick={() => handleOpenEpgPrograms(channel)}
                       >
                         <CalendarDays size={16} />
                       </button>
                       <button
                         className="action-btn"
-                        title="编辑"
+                        title={t('channels:actions.edit')}
                         onClick={() => handleEditChannel(channel)}
                       >
                         <Pencil size={16} />
                       </button>
                       <button
                         className="action-btn danger"
-                        title="删除"
-                        onClick={() => deleteMutation.mutate(channel.id)}
+                        title={t('channels:actions.delete')}
+                        onClick={() => setDeletingChannel(channel)}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -521,18 +532,18 @@ export const Channels: React.FC = () => {
               <div className="empty-icon">
                 <Tv size={48} strokeWidth={1} />
               </div>
-              <div className="empty-title">没有找到频道</div>
-              <div className="empty-desc">尝试调整搜索条件或导入新的 M3U 播放列表</div>
+              <div className="empty-title">{t('channels:empty.title')}</div>
+              <div className="empty-desc">{t('channels:empty.desc')}</div>
             </div>
           )}
         </div>
       ) : (
         <div className="cards-grid">
-          {channelsData?.items?.map((channel, idx) => (
+          {channelsData?.items?.map((channel, index) => (
             <div
               key={channel.id}
               className={`channel-card card stagger-item ${selectedChannels.has(channel.id) ? 'selected' : ''}`}
-              style={{ animationDelay: `${idx * 0.04}s` }}
+              style={{ animationDelay: `${index * 0.04}s` }}
               onClick={() => handleSelectChannel(channel.id)}
             >
               <div className="card-thumbnail">
@@ -550,7 +561,7 @@ export const Channels: React.FC = () => {
                       e.stopPropagation();
                       handlePlay(channel);
                     }}
-                    title="播放"
+                    title={t('channels:actions.play')}
                   >
                     <CirclePlay size={24} />
                   </button>
@@ -562,7 +573,7 @@ export const Channels: React.FC = () => {
                       testMutation.mutate(channel.id);
                     }}
                     disabled={testingId === channel.id || batchTesting}
-                    title="测试连接"
+                    title={t('channels:actions.test')}
                     style={{ marginLeft: '8px' }}
                   >
                     {testingId === channel.id ? (
@@ -582,7 +593,7 @@ export const Channels: React.FC = () => {
               <div className="actions-cell">
                 <button
                   className="action-btn"
-                  title="节目单"
+                  title={t('channels:actions.epg')}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleOpenEpgPrograms(channel);
@@ -592,7 +603,7 @@ export const Channels: React.FC = () => {
                 </button>
                 <button
                   className="action-btn"
-                  title="编辑"
+                  title={t('channels:actions.edit')}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleEditChannel(channel);
@@ -602,17 +613,17 @@ export const Channels: React.FC = () => {
                 </button>
                 <button
                   className="action-btn danger"
-                  title="删除"
+                  title={t('channels:actions.delete')}
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteMutation.mutate(channel.id);
+                    setDeletingChannel(channel);
                   }}
                 >
                   <Trash2 size={16} />
                 </button>
                 <button
                   className="action-btn"
-                  title="更多"
+                  title={t('channels:actions.more')}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <MoreHorizontal size={16} />
@@ -623,7 +634,6 @@ export const Channels: React.FC = () => {
         </div>
       )}
 
-      {/* Pagination */}
       {renderPagination()}
 
       <Suspense fallback={null}>
@@ -631,6 +641,7 @@ export const Channels: React.FC = () => {
           <ImportM3UModal
             isOpen={showImportModal}
             onClose={() => setShowImportModal(false)}
+            onImported={handleImportCompleted}
           />
         )}
 
@@ -665,6 +676,28 @@ export const Channels: React.FC = () => {
             channel={playerChannel}
           />
         )}
+
+        <ConfirmDialog
+          isOpen={deletingChannel !== null}
+          onClose={() => setDeletingChannel(null)}
+          onConfirm={handleConfirmChannelDelete}
+          title={t('channels:deleteConfirmTitle')}
+          message={t('channels:deleteConfirmMessage', { name: deletingChannel?.name ?? '' })}
+          confirmText={t('common:delete')}
+          type="danger"
+          isLoading={deleteMutation.isPending}
+        />
+
+        <ConfirmDialog
+          isOpen={showBatchDeleteConfirm}
+          onClose={() => setShowBatchDeleteConfirm(false)}
+          onConfirm={handleConfirmBatchDelete}
+          title={t('channels:deleteSelectedConfirmTitle')}
+          message={t('channels:deleteSelectedConfirm', { count: selectedChannels.size })}
+          confirmText={t('common:delete')}
+          type="danger"
+          isLoading={batchDeleteMutation.isPending}
+        />
       </Suspense>
     </div>
   );

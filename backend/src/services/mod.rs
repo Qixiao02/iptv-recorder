@@ -17,7 +17,7 @@ pub mod transcode;
 
 pub use audit::AuditService;
 pub use auth::{AuthService, Claims};
-pub use channel::{ChannelService, ChannelTestResult, ImportChannelResult, PaginationParams};
+pub use channel::{ChannelService, ChannelTestResult, PaginationParams};
 pub use cleanup::CleanupService;
 pub use config_service::{ConfigService, ConfigUpdateRequest, SystemConfig};
 pub use epg::{EpgService, ImportEpgRequest};

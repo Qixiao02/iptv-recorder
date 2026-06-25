@@ -172,7 +172,7 @@ impl From<CreateScheduleRequest> for NormalizedScheduleRequest {
             output_template: req
                 .output_template
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "{channel_name}_{date}_{time}.mp4".to_string()),
+                .unwrap_or_else(|| "{channel_name}_{date}_{time}".to_string()),
             output_dir: req
                 .output_dir
                 .and_then(|s| if s.is_empty() { None } else { Some(s) }),
@@ -275,7 +275,7 @@ mod tests {
             .await
             .expect("create schedule");
 
-        assert_eq!(created.output_template, "{channel_name}_{date}_{time}.mp4");
+        assert_eq!(created.output_template, "{channel_name}_{date}_{time}");
         assert_eq!(created.output_dir, None);
         assert_eq!(created.priority, 5);
         assert_eq!(created.video_quality, "best");
@@ -308,7 +308,7 @@ mod tests {
             .expect("update schedule");
 
         assert_eq!(updated.name, "Morning Updated");
-        assert_eq!(updated.output_template, "{channel_name}_{date}_{time}.mp4");
+        assert_eq!(updated.output_template, "{channel_name}_{date}_{time}");
         assert_eq!(updated.output_dir, None);
         assert_eq!(updated.priority, 5);
         assert_eq!(updated.video_quality, "best");

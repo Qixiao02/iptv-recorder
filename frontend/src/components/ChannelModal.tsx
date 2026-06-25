@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createChannel, updateChannel } from '@/api/channels';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { X, Loader2 } from 'lucide-react';
 import type { Channel, CreateChannelRequest } from '@/types';
 import './Modal.css';
@@ -8,42 +10,40 @@ import './Modal.css';
 interface ChannelModalProps {
   isOpen: boolean;
   onClose: () => void;
-  channel?: Channel | null; // 如果有值则为编辑模式
+  channel?: Channel | null;
 }
 
+const emptyForm: CreateChannelRequest = {
+  name: '',
+  url: '',
+  group_name: '',
+  logo_url: '',
+  source_visibility: 'public',
+  playback_strategy: 'auto',
+};
+
 export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, channel }) => {
+  const { t } = useTranslation(['components', 'common']);
+  useI18nNamespace(['components', 'common']);
   const queryClient = useQueryClient();
   const isEdit = !!channel;
-
-  const [form, setForm] = useState<CreateChannelRequest>({
-    name: '',
-    url: '',
-    group_name: '',
-    logo_url: '',
-    source_visibility: 'public',
-    playback_strategy: 'auto',
-  });
+  const [form, setForm] = useState<CreateChannelRequest>(emptyForm);
 
   useEffect(() => {
-    if (channel) {
-      setForm({
-        name: channel.name,
-        url: channel.url,
-        group_name: channel.group_name,
-        logo_url: channel.logo_url || '',
-        source_visibility: channel.source_visibility,
-        playback_strategy: channel.playback_strategy,
-      });
-    } else {
-      setForm({
-        name: '',
-        url: '',
-        group_name: '',
-        logo_url: '',
-        source_visibility: 'public',
-        playback_strategy: 'auto',
-      });
-    }
+    queueMicrotask(() => {
+      if (channel) {
+        setForm({
+          name: channel.name,
+          url: channel.url,
+          group_name: channel.group_name,
+          logo_url: channel.logo_url || '',
+          source_visibility: channel.source_visibility,
+          playback_strategy: channel.playback_strategy,
+        });
+      } else {
+        setForm(emptyForm);
+      }
+    });
   }, [channel]);
 
   const createMutation = useMutation({
@@ -55,8 +55,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: CreateChannelRequest }) =>
-      updateChannel(id, data),
+    mutationFn: ({ id, data }: { id: string; data: CreateChannelRequest }) => updateChannel(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
       handleClose();
@@ -76,14 +75,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   };
 
   const handleClose = () => {
-    setForm({
-      name: '',
-      url: '',
-      group_name: '',
-      logo_url: '',
-      source_visibility: 'public',
-      playback_strategy: 'auto',
-    });
+    setForm(emptyForm);
     onClose();
   };
 
@@ -93,7 +85,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
     <div className="modal-overlay" onClick={handleClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{isEdit ? '编辑频道' : '新建频道'}</h2>
+          <h2>{isEdit ? t('components:channelModal.editTitle') : t('components:channelModal.createTitle')}</h2>
           <button className="modal-close" onClick={handleClose}>
             <X size={20} />
           </button>
@@ -101,18 +93,18 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
 
         <div className="modal-body">
           <div className="form-group">
-            <label>频道名称 *</label>
+            <label>{t('components:channelModal.name')}</label>
             <input
               type="text"
               className="input"
-              placeholder="例如：CCTV-1"
+              placeholder={t('components:channelModal.namePlaceholder')}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
           </div>
 
           <div className="form-group">
-            <label>流地址 *</label>
+            <label>{t('components:channelModal.url')}</label>
             <input
               type="text"
               className="input"
@@ -123,11 +115,11 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
           </div>
 
           <div className="form-group">
-            <label>分组名称</label>
+            <label>{t('components:channelModal.group')}</label>
             <input
               type="text"
               className="input"
-              placeholder="例如：央视"
+              placeholder={t('components:channelModal.groupPlaceholder')}
               value={form.group_name}
               onChange={(e) => setForm({ ...form, group_name: e.target.value })}
             />
@@ -146,7 +138,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
 
           <div className="form-row">
             <div className="form-group">
-              <label>源可见性</label>
+              <label>{t('components:channelModal.sourceVisibility')}</label>
               <select
                 className="input"
                 value={form.source_visibility}
@@ -155,13 +147,13 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
                   source_visibility: e.target.value as NonNullable<CreateChannelRequest['source_visibility']>,
                 })}
               >
-                <option value="public">公网源 / 可公开访问</option>
-                <option value="private_server_only">私有源 / 仅服务端可访问</option>
+                <option value="public">{t('components:channelModal.sourcePublic')}</option>
+                <option value="private_server_only">{t('components:channelModal.sourcePrivate')}</option>
               </select>
             </div>
 
             <div className="form-group">
-              <label>播放策略</label>
+              <label>{t('components:channelModal.playbackStrategy')}</label>
               <select
                 className="input"
                 value={form.playback_strategy}
@@ -170,24 +162,24 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
                   playback_strategy: e.target.value as NonNullable<CreateChannelRequest['playback_strategy']>,
                 })}
               >
-                <option value="auto">自动选择</option>
-                <option value="hls_only">强制 HLS 中转</option>
-                <option value="proxy_only">仅代理预览</option>
-                <option value="record_only">仅允许录制</option>
+                <option value="auto">{t('components:channelModal.playbackAuto')}</option>
+                <option value="hls_only">{t('components:channelModal.playbackHls')}</option>
+                <option value="proxy_only">{t('components:channelModal.playbackProxy')}</option>
+                <option value="record_only">{t('components:channelModal.playbackRecord')}</option>
               </select>
             </div>
           </div>
 
           {form.source_visibility === 'private_server_only' && (
             <div className="form-hint">
-              私有源只允许服务端/NAS 拉流，外网预览会通过服务端中转，可能占用服务器出口带宽。
+              {t('components:channelModal.privateHint')}
             </div>
           )}
         </div>
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={handleClose}>
-            取消
+            {t('common:cancel')}
           </button>
           <button
             className="btn btn-primary"
@@ -197,10 +189,10 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
             {isLoading ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                保存中...
+                {t('components:channelModal.saving')}
               </>
             ) : (
-              isEdit ? '保存' : '创建'
+              isEdit ? t('components:channelModal.save') : t('components:channelModal.create')
             )}
           </button>
         </div>

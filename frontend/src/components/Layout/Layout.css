@@ -504,8 +504,30 @@
 /* Content */
 .content {
   flex: 1;
-  padding: 24px;
+  padding: 32px 28px 28px;
   background: var(--bg-base);
+}
+
+.content .page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.content .page-title h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px 0;
+  letter-spacing: 0;
+}
+
+.content .page-subtitle {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  margin: 0;
 }
 
 /* ==================== Responsive ==================== */
@@ -536,6 +558,12 @@
   }
 
   .content {
-    padding: 16px;
+    padding: 22px 16px 16px;
+  }
+
+  .content .page-header {
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
   }
 }

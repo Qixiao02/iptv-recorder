@@ -177,7 +177,7 @@ fn default_duration() -> i64 {
 }
 
 fn default_output_template() -> String {
-    "{channel_name}_{date}_{time}.mp4".to_string()
+    "{channel_name}_{date}_{time}".to_string()
 }
 
 fn default_priority() -> i32 {

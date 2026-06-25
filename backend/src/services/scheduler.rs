@@ -472,7 +472,7 @@ mod tests {
             channel_id: "channel-1".to_string(),
             cron_expression: "0 8 * * *".to_string(),
             duration_seconds: 1800,
-            output_template: "{channel_name}_{date}_{time}.mp4".to_string(),
+            output_template: "{channel_name}_{date}_{time}".to_string(),
             output_dir: None,
             priority: 5,
             enabled,
@@ -523,9 +523,7 @@ mod tests {
         let (mut manager, db_path) = test_scheduler("scheduler-timezone").await;
         manager.config.scheduler.timezone = "Asia/Shanghai".to_string();
 
-        let next_run = manager
-            .get_next_run_time("25 22 * * *")
-            .expect("next run");
+        let next_run = manager.get_next_run_time("25 22 * * *").expect("next run");
         let shanghai = next_run.with_timezone(&chrono_tz::Asia::Shanghai);
 
         assert_eq!(shanghai.hour(), 22);

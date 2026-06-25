@@ -1,4 +1,6 @@
 import apiClient from './client';
+import { AxiosError } from 'axios';
+import i18n from '@/i18n';
 import type {
   Channel,
   CreateChannelRequest,
@@ -23,6 +25,40 @@ export interface PaginatedResponse<T> {
   page_size: number;
   total_pages: number;
 }
+
+// Friendly error message mapping for known backend errors
+const friendlyError = (error: unknown): string => {
+  if (error instanceof AxiosError) {
+    const msg = error.response?.data?.details || error.message || '';
+    if (msg.includes('UNIQUE constraint failed') && msg.includes('url')) {
+      return i18n.t('channels:errors.duplicateUrl', { defaultValue: '频道 URL 已存在' });
+    }
+    if (msg.includes('UNIQUE constraint failed') && msg.includes('name')) {
+      return i18n.t('channels:errors.duplicateName', { defaultValue: '频道名称已存在' });
+    }
+    if (msg.includes('UNIQUE constraint failed')) {
+      return i18n.t('channels:errors.duplicateEntry', { defaultValue: '数据重复，导入失败' });
+    }
+    if (msg.includes('Invalid URL') || msg.includes('invalid url')) {
+      return i18n.t('channels:errors.invalidUrl', { defaultValue: '无效的频道 URL' });
+    }
+    if (msg.includes('timeout') || msg.includes('Timeout')) {
+      return i18n.t('channels:errors.timeout', { defaultValue: '请求超时，请检查网络连接' });
+    }
+    if (msg.includes('ECONNREFUSED') || msg.includes('Connection refused')) {
+      return i18n.t('channels:errors.connectionRefused', { defaultValue: '连接被拒绝，请检查服务状态' });
+    }
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      return i18n.t('channels:errors.networkError', { defaultValue: '网络错误，请检查网络连接' });
+    }
+    // Return the original details or a generic fallback
+    return error.response?.data?.details || error.message || i18n.t('common:requestFailed', { defaultValue: '请求失败' });
+  }
+  if (error instanceof Error) {
+    return friendlyError({ response: { data: { details: error.message } } } as AxiosError);
+  }
+  return i18n.t('common:unknownError', { defaultValue: '未知错误' });
+};
 
 // 获取频道列表（分页）
 export const getChannels = (params?: PaginationParams): Promise<PaginatedResponse<Channel>> => {
@@ -62,6 +98,14 @@ export const deleteChannel = (id: string): Promise<void> => {
   return apiClient.delete(`/channels/${id}`).then((res) => res.data);
 };
 
+export interface BatchDeleteChannelsResponse {
+  deleted: number;
+}
+
+export const batchDeleteChannels = (ids: string[]): Promise<BatchDeleteChannelsResponse> => {
+  return apiClient.post('/channels/batch-delete', { ids }).then((res) => res.data);
+};
+
 // 获取频道分组
 export const getChannelGroups = (): Promise<string[]> => {
   return apiClient.get('/channels/groups').then((res) => res.data);
@@ -81,3 +125,5 @@ export const importM3UFromContent = (data: ImportM3URequest): Promise<ImportM3UR
 export const testChannel = (id: string): Promise<ChannelTestResult> => {
   return apiClient.post(`/channels/${id}/test`).then((res) => res.data);
 };
+
+export { friendlyError };

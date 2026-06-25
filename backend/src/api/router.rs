@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 use crate::api::handlers::{
+    batch_delete_channels,
     cancel_task,
     change_password,
     channel_stream,
@@ -42,6 +43,7 @@ use crate::api::handlers::{
     list_groups,
     // 计划相关
     list_schedules,
+    list_server_directories,
     // 任务相关
     list_tasks,
     // 认证相关
@@ -132,6 +134,7 @@ pub async fn create_router(
     // 需要 operator/admin 的路由
     let operator_routes = Router::new()
         .route("/api/channels", post(create_channel))
+        .route("/api/channels/batch-delete", post(batch_delete_channels))
         .route(
             "/api/channels/{id}",
             axum::routing::put(update_channel).delete(delete_channel),
@@ -150,6 +153,7 @@ pub async fn create_router(
         .route("/api/tasks/manual", post(start_manual_record))
         .route("/api/scheduler/reload", post(reload_scheduler))
         .route("/api/config", post(update_config))
+        .route("/api/system/directories", get(list_server_directories))
         .route("/api/system/cleanup/run", post(run_cleanup))
         .route("/api/epg/sources", post(import_epg_source))
         // 添加认证中间件

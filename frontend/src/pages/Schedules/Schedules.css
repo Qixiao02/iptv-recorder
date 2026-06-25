@@ -2,6 +2,14 @@
   animation: fade-in 0.4s ease-out;
 }
 
+.schedules-page .page-header {
+  padding-top: 4px;
+}
+
+.schedule-list {
+  margin-top: 4px;
+}
+
 /* Schedule List */
 .schedule-list {
   display: flex;

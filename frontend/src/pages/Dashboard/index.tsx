@@ -5,6 +5,9 @@ import { getTasks, cancelTask } from '@/api/tasks';
 import { getAllChannels, getChannels } from '@/api/channels';
 import { getSchedules } from '@/api/schedules';
 import { getUpcoming } from '@/api/system';
+import { formatBytes, formatMinutes, formatShortDateTime } from '@/i18n/format';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import type { AppLanguage } from '@/i18n/types';
 import {
   Tv,
   CalendarClock,
@@ -51,6 +54,7 @@ interface TaskRowProps {
 }
 
 const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
+  const { t, i18n } = useTranslation(['common']);
   const isRunning = task.status === 'running';
 
   return (
@@ -75,14 +79,16 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
         {isRunning ? (
           <div className="badge badge-recording">
             <span className="recording-dot" />
-            录制中
+            {t('common:taskStatus.running')}
           </div>
         ) : task.status === 'completed' ? (
-          <div className="badge badge-success">已完成</div>
+          <div className="badge badge-success">{t('common:taskStatus.completed')}</div>
         ) : task.status === 'failed' ? (
-          <div className="badge badge-error">失败</div>
+          <div className="badge badge-error">{t('common:taskStatus.failed')}</div>
+        ) : task.status === 'cancelled' ? (
+          <div className="badge badge-neutral">{t('common:taskStatus.cancelled')}</div>
         ) : (
-          <div className="badge badge-neutral">等待中</div>
+          <div className="badge badge-neutral">{t('common:taskStatus.pending')}</div>
         )}
       </div>
 
@@ -99,15 +105,11 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
       )}
 
       <div className="task-duration">
-        {task.duration_recorded > 0
-          ? `${Math.floor(task.duration_recorded / 60)} min`
-          : '-'}
+        {formatMinutes(task.duration_recorded, t)}
       </div>
 
       <div className="task-size">
-        {task.file_size > 0
-          ? `${(task.file_size / 1024 / 1024).toFixed(1)} MB`
-          : '-'}
+        {task.file_size > 0 ? formatBytes(task.file_size, i18n.language as AppLanguage) : '-'}
       </div>
 
       <div className="task-actions">
@@ -124,24 +126,14 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
   );
 };
 
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  if (bytes >= 1024 * 1024 * 1024) {
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-  }
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  }
-  return `${(bytes / 1024).toFixed(1)} KB`;
-};
-
 export const Dashboard: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation(['dashboard', 'common']);
+  const isI18nReady = useI18nNamespace(['dashboard', 'common']);
   const queryClient = useQueryClient();
 
   const { data: channels } = useQuery({
     queryKey: ['channels', 'count'],
-    queryFn: () => getChannels({ page_size: 1 }), // 只需要总数
+    queryFn: () => getChannels({ page_size: 1 }),
   });
 
   const { data: allChannels } = useQuery({
@@ -172,15 +164,12 @@ export const Dashboard: React.FC = () => {
     },
   });
 
-  const runningTasks = tasks?.filter((t) => t.status === 'running') || [];
-  const completedTasks = tasks?.filter((t) => t.status === 'completed').slice(0, 5) || [];
-  const failedCount = tasks?.filter((t) => t.status === 'failed').length || 0;
+  const runningTasks = tasks?.filter((task) => task.status === 'running') || [];
+  const completedTasks = tasks?.filter((task) => task.status === 'completed').slice(0, 5) || [];
+  const failedCount = tasks?.filter((task) => task.status === 'failed').length || 0;
+  const totalStorage = tasks?.reduce((sum, task) => sum + (task.file_size || 0), 0) || 0;
+  const enabledSchedules = schedules?.filter((schedule) => schedule.enabled).length || 0;
 
-  // 计算总存储占用
-  const totalStorage = tasks?.reduce((sum, t) => sum + (t.file_size || 0), 0) || 0;
-
-  // 启用的计划数
-  const enabledSchedules = schedules?.filter((s) => s.enabled).length || 0;
   const channelMap = React.useMemo(() => {
     const map = new Map<string, string>();
     allChannels?.forEach((channel) => {
@@ -189,68 +178,71 @@ export const Dashboard: React.FC = () => {
     return map;
   }, [allChannels]);
 
+  const getChannelName = (channelId: string) =>
+    channelMap.get(channelId) || t('common:channelFallback', { id: channelId.slice(0, 8) });
+
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
+
   return (
     <div className="dashboard">
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title">
-          <h1>{t('dashboard.title')}</h1>
-          <p className="page-subtitle">系统运行状态概览</p>
+          <h1>{t('dashboard:title')}</h1>
+          <p className="page-subtitle">{t('dashboard:subtitle')}</p>
         </div>
         <button className="btn btn-ghost" onClick={() => refetch()}>
           <RefreshCw size={16} />
-          刷新
+          {t('common:refresh')}
         </button>
       </div>
 
-      {/* Stats Grid */}
       <div className="stats-grid">
         <StatCard
           icon={<Tv size={24} />}
-          label={t('dashboard.totalChannels')}
+          label={t('dashboard:totalChannels')}
           value={channels?.total || 0}
           gradient="stat-bg-blue"
         />
         <StatCard
           icon={<CalendarClock size={24} />}
-          label={t('dashboard.totalSchedules')}
+          label={t('dashboard:totalSchedules')}
           value={schedules?.length || 0}
-          trend={`${enabledSchedules} 启用`}
+          trend={`${enabledSchedules} ${t('common:enabled')}`}
           trendUp={enabledSchedules > 0}
           gradient="stat-bg-green"
         />
         <StatCard
           icon={<CircleDot size={24} />}
-          label={t('dashboard.todayTasks')}
+          label={t('dashboard:todayTasks')}
           value={runningTasks.length}
           gradient="stat-bg-rose"
         />
         <StatCard
           icon={<HardDrive size={24} />}
-          label={t('dashboard.storageUsed')}
-          value={formatFileSize(totalStorage)}
-          trend={failedCount > 0 ? `${failedCount} 失败` : '无失败'}
+          label={t('dashboard:storageUsed')}
+          value={formatBytes(totalStorage, i18n.language as AppLanguage)}
+          trend={failedCount > 0 ? t('dashboard:failedTasks', { count: failedCount }) : t('dashboard:noFailedTasks')}
           trendUp={failedCount === 0}
           gradient="stat-bg-amber"
         />
       </div>
 
-      {/* Main Content Grid */}
       <div className="content-grid">
-        {/* Running Tasks */}
         <div className="card recording-card">
           <div className="card-header">
             <h3>
               <CircleDot size={18} className="recording-icon" />
-              {t('dashboard.recording')}
+              {t('dashboard:recording')}
             </h3>
-            <span className="task-count">{runningTasks.length} 个任务</span>
+            <span className="task-count">{t('dashboard:taskCount', { count: runningTasks.length })}</span>
           </div>
           <div className="card-body">
             {tasksLoading ? (
               <div className="loading-skeleton">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="skeleton-row animate-shimmer" />
+                {[1, 2, 3].map((item) => (
+                  <div key={item} className="skeleton-row animate-shimmer" />
                 ))}
               </div>
             ) : runningTasks.length === 0 ? (
@@ -258,24 +250,24 @@ export const Dashboard: React.FC = () => {
                 <div className="empty-icon">
                   <CircleDot size={48} strokeWidth={1} />
                 </div>
-                <div className="empty-title">暂无录制任务</div>
-                <div className="empty-desc">所有录制任务已完成或等待执行</div>
+                <div className="empty-title">{t('dashboard:noRecordingTasks')}</div>
+                <div className="empty-desc">{t('dashboard:allTasksCompleted')}</div>
               </div>
             ) : (
               <div className="task-list">
                 <div className="task-list-header">
-                  <span className="col-channel">频道</span>
-                  <span className="col-status">状态</span>
-                  <span className="col-progress">进度</span>
-                  <span className="col-duration">时长</span>
-                  <span className="col-size">大小</span>
+                  <span className="col-channel">{t('common:channel')}</span>
+                  <span className="col-status">{t('common:status')}</span>
+                  <span className="col-progress">{t('common:progress')}</span>
+                  <span className="col-duration">{t('common:duration')}</span>
+                  <span className="col-size">{t('common:size')}</span>
                   <span className="col-actions"></span>
                 </div>
-                {runningTasks.map((task, idx) => (
-                  <div key={task.id} className="stagger-item" style={{ animationDelay: `${idx * 0.05}s` }}>
+                {runningTasks.map((task, index) => (
+                  <div key={task.id} className="stagger-item" style={{ animationDelay: `${index * 0.05}s` }}>
                     <TaskRow
                       task={task}
-                      channelName={channelMap.get(task.channel_id) || `频道 ${task.channel_id.slice(0, 8)}...`}
+                      channelName={getChannelName(task.channel_id)}
                       onStop={() => cancelMutation.mutate(task.id)}
                     />
                   </div>
@@ -285,37 +277,31 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Upcoming Tasks */}
         <div className="card upcoming-card">
           <div className="card-header">
             <h3>
               <Clock size={18} />
-              {t('dashboard.upcoming')}
+              {t('dashboard:upcoming')}
             </h3>
           </div>
           <div className="card-body">
             {upcomingLoading ? (
               <div className="timeline-skeleton">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="skeleton-timeline animate-shimmer" />
+                {[1, 2, 3, 4].map((item) => (
+                  <div key={item} className="skeleton-timeline animate-shimmer" />
                 ))}
               </div>
             ) : upcoming && upcoming.length > 0 ? (
               <div className="timeline">
-                {upcoming.slice(0, 5).map((task, idx) => (
-                  <div key={task.schedule_id} className="timeline-item stagger-item" style={{ animationDelay: `${idx * 0.08}s` }}>
+                {upcoming.slice(0, 5).map((task, index) => (
+                  <div key={task.schedule_id} className="timeline-item stagger-item" style={{ animationDelay: `${index * 0.08}s` }}>
                     <div className="timeline-dot" />
                     <div className="timeline-content">
                       <div className="timeline-title">{task.schedule_name}</div>
                       <div className="timeline-meta">
-                        <span className="channel">{channelMap.get(task.channel_id) || `频道 ${task.channel_id.slice(0, 8)}...`}</span>
+                        <span className="channel">{getChannelName(task.channel_id)}</span>
                         <span className="time">
-                          {new Date(task.next_run).toLocaleString('zh-CN', {
-                            month: 'numeric',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatShortDateTime(task.next_run, i18n.language as AppLanguage)}
                         </span>
                       </div>
                     </div>
@@ -327,40 +313,39 @@ export const Dashboard: React.FC = () => {
                 <div className="empty-icon">
                   <Clock size={36} strokeWidth={1} />
                 </div>
-                <div className="empty-title">暂无即将执行的任务</div>
+                <div className="empty-title">{t('dashboard:noUpcomingTasks')}</div>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Recent Recordings */}
       <div className="card recent-card">
         <div className="card-header">
           <h3>
             <HardDrive size={18} />
-            {t('dashboard.recentCompleted')}
+            {t('dashboard:recentCompleted')}
           </h3>
-          <button className="btn btn-ghost btn-sm">查看全部</button>
+          <button className="btn btn-ghost btn-sm">{t('common:viewAll')}</button>
         </div>
         <div className="card-body">
           {completedTasks.length > 0 ? (
             <div className="recent-grid">
-              {completedTasks.map((task, idx) => (
-                <div key={task.id} className="recent-item stagger-item" style={{ animationDelay: `${idx * 0.05}s` }}>
+              {completedTasks.map((task, index) => (
+                <div key={task.id} className="recent-item stagger-item" style={{ animationDelay: `${index * 0.05}s` }}>
                   <div className="recent-thumbnail">
                     <Tv size={20} />
                   </div>
                   <div className="recent-info">
                     <div className="recent-name">
-                      Channel {task.channel_id.slice(0, 8)}...
+                      {getChannelName(task.channel_id)}
                     </div>
                     <div className="recent-meta">
-                      <span>{task.duration_recorded ? `${Math.floor(task.duration_recorded / 60)} min` : '-'}</span>
-                      <span>{task.file_size ? `${(task.file_size / 1024 / 1024).toFixed(1)} MB` : '-'}</span>
+                      <span>{formatMinutes(task.duration_recorded, t)}</span>
+                      <span>{task.file_size ? formatBytes(task.file_size, i18n.language as AppLanguage) : '-'}</span>
                     </div>
                   </div>
-                  <div className="badge badge-success">完成</div>
+                  <div className="badge badge-success">{t('common:taskStatus.completed')}</div>
                 </div>
               ))}
             </div>
@@ -369,7 +354,7 @@ export const Dashboard: React.FC = () => {
               <div className="empty-icon">
                 <HardDrive size={48} strokeWidth={1} />
               </div>
-              <div className="empty-title">暂无最近录制</div>
+              <div className="empty-title">{t('dashboard:noRecentRecordings')}</div>
             </div>
           )}
         </div>

@@ -1,0 +1,29 @@
+services:
+  iptv-recorder-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: iptv-recorder-backend
+    restart: unless-stopped
+    ports:
+      - "3033:3000"
+    environment:
+      RUST_LOG: info
+      IPTV_JWT_SECRET: dev-local-jwt-secret-iptv-recorder-2026-change-me
+      IPTV_INITIAL_ADMIN_PASSWORD: admin123456
+      IPTV__SERVER__HOST: 0.0.0.0
+      IPTV__SERVER__PORT: 3000
+      IPTV__DATABASE__PATH: /app/data/iptv-recorder.db
+      IPTV__STORAGE__RECORDINGS_DIR: /app/data/recordings
+      IPTV__STORAGE__TEMP_DIR: /app/data/.tmp
+      IPTV__STORAGE__PREVIEW_TEMP_DIR: /dev/shm/iptv-recorder-hls
+      IPTV__RECORDER__EXECUTABLE: N_m3u8DL-RE
+      IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH: ffmpeg
+    volumes:
+      - ./backend/data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

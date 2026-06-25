@@ -4,7 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSchedules, deleteSchedule, toggleSchedule } from '@/api/schedules';
 import { startManualRecord } from '@/api/tasks';
 import { upsertTaskCache } from '@/lib/taskRealtime';
-import { ToastContainer, useToast } from '@/components/ConfirmDialog';
+import { ToastContainer } from '@/components/ConfirmDialog';
+import { useToast } from '@/components/useToast';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import {
   Plus,
   CalendarClock,
@@ -23,56 +25,48 @@ import './Schedules.css';
 const ScheduleModal = lazy(() => import('@/components/ScheduleModal'));
 
 const CronDescription: React.FC<{ expression: string }> = ({ expression }) => {
+  const { t } = useTranslation(['schedules']);
   const parts = expression.trim().split(/\s+/);
   if (parts.length < 5) return <span>{expression}</span>;
 
   const [min, hour, dom, , weekday] = parts;
-  const weekDayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-
+  const dayNames = t('schedules:cron.days', { returnObjects: true }) as string[];
   const pad = (s: string) => s.padStart(2, '0');
   const timeStr = `${pad(hour)}:${pad(min)}`;
 
-  // 每分钟
-  if (min === '*' && hour === '*') return <span>每分钟</span>;
+  if (min === '*' && hour === '*') return <span>{t('schedules:cron.everyMinute')}</span>;
 
-  // 每 N 分钟
   const everyMinMatch = min.match(/^\*\/(\d+)$/);
-  if (everyMinMatch && hour === '*') return <span>每 {everyMinMatch[1]} 分钟</span>;
+  if (everyMinMatch && hour === '*') {
+    return <span>{t('schedules:cron.everyNMinutes', { count: Number(everyMinMatch[1]) })}</span>;
+  }
 
-  // 每小时整点
-  if (min === '0' && hour === '*') return <span>每小时</span>;
+  if (min === '0' && hour === '*') return <span>{t('schedules:cron.everyHour')}</span>;
 
-  // 每 N 小时
   const everyHourMatch = hour.match(/^\*\/(\d+)$/);
-  if (everyHourMatch && min === '0') return <span>每 {everyHourMatch[1]} 小时</span>;
+  if (everyHourMatch && min === '0') {
+    return <span>{t('schedules:cron.everyNHours', { count: Number(everyHourMatch[1]) })}</span>;
+  }
 
-  // 以下均要求 min/hour 为固定数字
   if (!/^\d+$/.test(min) || !/^\d+$/.test(hour)) return <span>{expression}</span>;
 
-  // 工作日
-  if (weekday === '1-5') return <span>工作日 {timeStr}</span>;
+  if (weekday === '1-5') return <span>{t('schedules:cron.weekday', { time: timeStr })}</span>;
+  if (weekday === '0,6' || weekday === '6,0') return <span>{t('schedules:cron.weekend', { time: timeStr })}</span>;
+  if (weekday === '*' && /^\d+$/.test(dom)) return <span>{t('schedules:cron.monthly', { day: dom, time: timeStr })}</span>;
 
-  // 周末
-  if (weekday === '0,6' || weekday === '6,0') return <span>周末 {timeStr}</span>;
-
-  // 每月某日
-  if (weekday === '*' && /^\d+$/.test(dom)) return <span>每月 {dom} 日 {timeStr}</span>;
-
-  // 每周某天（单个数字）
   if (/^\d$/.test(weekday)) {
-    const dayName = weekDayNames[parseInt(weekday)];
+    const dayName = dayNames[parseInt(weekday)];
     if (dayName) return <span>{dayName} {timeStr}</span>;
   }
 
-  // 每天
-  if (weekday === '*') return <span>每天 {timeStr}</span>;
+  if (weekday === '*') return <span>{t('schedules:cron.daily', { time: timeStr })}</span>;
 
-  // fallback
   return <span>{expression}</span>;
 };
 
 export const Schedules: React.FC = () => {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['schedules', 'common']);
+  const isI18nReady = useI18nNamespace(['schedules', 'common']);
   const queryClient = useQueryClient();
   const { toasts, showToast, removeToast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -104,11 +98,11 @@ export const Schedules: React.FC = () => {
     onSuccess: (task) => {
       upsertTaskCache(queryClient, task);
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      showToast('录制任务已创建', 'success');
+      showToast(t('schedules:created'), 'success');
       setExecutingId(null);
     },
     onError: (error) => {
-      showToast(`立即执行失败: ${(error as Error).message}`, 'error');
+      showToast(t('schedules:executeFailed', { message: (error as Error).message }), 'error');
       setExecutingId(null);
     },
   });
@@ -145,44 +139,46 @@ export const Schedules: React.FC = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     if (hours > 0) {
-      return `${hours}小时${minutes > 0 ? ` ${minutes}分钟` : ''}`;
+      return `${hours}h${minutes > 0 ? ` ${minutes}m` : ''}`;
     }
-    return `${minutes}分钟`;
+    return `${minutes}m`;
   };
+
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   const shouldRenderScheduleModal = showModal || editingSchedule !== null;
 
   return (
     <div className="schedules-page">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title">
-          <h1>{t('menu.schedules')}</h1>
+          <h1>{t('schedules:title')}</h1>
           <p className="page-subtitle">
-            {schedules?.filter((s) => s.enabled).length || 0} 个计划启用中
+            {t('schedules:enabledCount', { count: schedules?.filter((schedule) => schedule.enabled).length || 0 })}
           </p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>
           <Plus size={16} />
-          {t('common.add')}
+          {t('schedules:add')}
         </button>
       </div>
 
-      {/* Schedule List */}
       {isLoading ? (
         <div className="loading-list">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="schedule-skeleton card animate-shimmer" />
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="schedule-skeleton card animate-shimmer" />
           ))}
         </div>
       ) : schedules && schedules.length > 0 ? (
         <div className="schedule-list">
-          {schedules.map((schedule, idx) => (
+          {schedules.map((schedule, index) => (
             <div
               key={schedule.id}
               className={`schedule-card card stagger-item ${!schedule.enabled ? 'disabled' : ''}`}
-              style={{ animationDelay: `${idx * 0.05}s` }}
+              style={{ animationDelay: `${index * 0.05}s` }}
             >
               <div className="schedule-main">
                 <div className="schedule-icon">
@@ -227,27 +223,26 @@ export const Schedules: React.FC = () => {
                 </div>
               </div>
 
-              {/* Expanded Details */}
               {expandedId === schedule.id && (
                 <div className="schedule-details animate-fade-in">
                   <div className="detail-row">
-                    <span className="detail-label">Cron 表达式</span>
+                    <span className="detail-label">{t('schedules:details.cron')}</span>
                     <code className="detail-value">{schedule.cron_expression}</code>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">输出模板</span>
+                    <span className="detail-label">{t('schedules:details.outputTemplate')}</span>
                     <code className="detail-value">{schedule.output_template}</code>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">输出目录</span>
-                    <code className="detail-value">{schedule.output_dir || '使用系统默认'}</code>
+                    <span className="detail-label">{t('schedules:details.outputDir')}</span>
+                    <code className="detail-value">{schedule.output_dir || t('schedules:details.systemDefault')}</code>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">优先级</span>
+                    <span className="detail-label">{t('schedules:details.priority')}</span>
                     <span className="detail-value">{schedule.priority}</span>
                   </div>
                   <div className="detail-row">
-                    <span className="detail-label">重试次数</span>
+                    <span className="detail-label">{t('schedules:details.retry')}</span>
                     <span className="detail-value">{schedule.max_retry}</span>
                   </div>
 
@@ -262,21 +257,21 @@ export const Schedules: React.FC = () => {
                       ) : (
                         <Play size={14} />
                       )}
-                      立即执行
+                      {t('schedules:actions.execute')}
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
                       onClick={() => handleEdit(schedule)}
                     >
                       <Pencil size={14} />
-                      编辑
+                      {t('schedules:actions.edit')}
                     </button>
                     <button
                       className="btn btn-ghost btn-sm danger"
                       onClick={() => deleteMutation.mutate(schedule.id)}
                     >
                       <Trash2 size={14} />
-                      删除
+                      {t('schedules:actions.delete')}
                     </button>
                   </div>
                 </div>
@@ -289,16 +284,15 @@ export const Schedules: React.FC = () => {
           <div className="empty-icon">
             <CalendarClock size={48} strokeWidth={1} />
           </div>
-          <div className="empty-title">暂无录制计划</div>
-          <div className="empty-desc">创建定时录制计划，自动录制您喜爱的节目</div>
+          <div className="empty-title">{t('schedules:empty.title')}</div>
+          <div className="empty-desc">{t('schedules:empty.desc')}</div>
           <button className="btn btn-primary" onClick={() => setShowModal(true)}>
             <Plus size={16} />
-            创建计划
+            {t('schedules:create')}
           </button>
         </div>
       )}
 
-      {/* Schedule Modal */}
       <Suspense fallback={null}>
         {shouldRenderScheduleModal && (
           <ScheduleModal

@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { login } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
+import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { Clapperboard, User, Lock, Loader2, AlertCircle } from 'lucide-react';
 import './Login.css';
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation(['login', 'common']);
+  const isI18nReady = useI18nNamespace(['login', 'common']);
   const setAuth = useAuthStore((state) => state.setAuth);
 
   const [username, setUsername] = useState('');
@@ -19,7 +23,7 @@ export const Login: React.FC = () => {
     setError('');
 
     if (!username.trim() || !password.trim()) {
-      setError('请输入用户名和密码');
+      setError(t('login:required'));
       return;
     }
 
@@ -30,11 +34,15 @@ export const Login: React.FC = () => {
       setAuth(response.token, response.user);
       navigate('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败，请重试');
+      setError(err instanceof Error ? err.message : t('login:failed'));
     } finally {
       setIsLoading(false);
     }
   };
+
+  if (!isI18nReady) {
+    return <div className="page-loading">{t('common:loading')}</div>;
+  }
 
   return (
     <div className="login-page">
@@ -44,7 +52,7 @@ export const Login: React.FC = () => {
             <Clapperboard size={48} strokeWidth={1.5} />
           </div>
           <h1 className="login-title">IPTV Recorder</h1>
-          <p className="login-subtitle">IPTV 录制管理系统</p>
+          <p className="login-subtitle">{t('login:subtitle')}</p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
@@ -61,7 +69,7 @@ export const Login: React.FC = () => {
               <input
                 type="text"
                 className="login-input"
-                placeholder="用户名"
+                placeholder={t('login:username')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={isLoading}
@@ -76,7 +84,7 @@ export const Login: React.FC = () => {
               <input
                 type="password"
                 className="login-input"
-                placeholder="密码"
+                placeholder={t('login:password')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
@@ -93,16 +101,16 @@ export const Login: React.FC = () => {
             {isLoading ? (
               <>
                 <Loader2 size={18} className="animate-spin" />
-                <span>登录中...</span>
+                <span>{t('login:submitting')}</span>
               </>
             ) : (
-              <span>登录</span>
+              <span>{t('login:submit')}</span>
             )}
           </button>
         </form>
 
         <div className="login-footer">
-          <p>首次启动请查看部署说明，确认已配置 JWT 密钥并妥善保管管理员初始密码</p>
+          <p>{t('login:firstRunHint')}</p>
         </div>
       </div>
     </div>

@@ -1,15 +1,17 @@
 import { create } from 'zustand';
+import { changeAppLanguage, getSavedLanguage } from '@/i18n';
+import type { AppLanguage } from '@/i18n/types';
 
 interface SettingState {
-  language: 'zh-CN' | 'en-US';
-  setLanguage: (language: 'zh-CN' | 'en-US') => void;
+  language: AppLanguage;
+  setLanguage: (language: AppLanguage) => Promise<void>;
 }
 
 export const useSettingStore = create<SettingState>((set) => ({
-  language: (localStorage.getItem('language') as 'zh-CN' | 'en-US') || 'zh-CN',
+  language: getSavedLanguage(),
 
-  setLanguage: (language) => {
-    localStorage.setItem('language', language);
+  setLanguage: async (language) => {
+    await changeAppLanguage(language);
     set({ language });
   },
 }));

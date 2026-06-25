@@ -2,28 +2,6 @@
   animation: fade-in 0.4s ease-out;
 }
 
-/* Page Header */
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 24px;
-}
-
-.page-title h1 {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 4px 0;
-  letter-spacing: -0.02em;
-}
-
-.page-subtitle {
-  font-size: 14px;
-  color: var(--text-tertiary);
-  margin: 0;
-}
-
 /* Stats Grid */
 .stats-grid {
   display: grid;

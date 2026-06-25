@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import type { ErrorResponse } from '@/types';
 import { getStoredAuthToken } from '@/stores/authStore';
+import i18n from '@/i18n';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -39,7 +40,7 @@ apiClient.interceptors.response.use(
       }
     }
 
-    const message = error.response?.data?.details || error.message || '请求失败';
+    const message = error.response?.data?.details || error.message || i18n.t('common:requestFailed', { defaultValue: 'Request failed' });
     console.error('API Error:', message);
     return Promise.reject(new Error(message));
   }
