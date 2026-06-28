@@ -286,6 +286,51 @@
   margin-top: 4px;
 }
 
+/* 输出模板变量提示：说明句 + 变量列表，避免挤在一行难以阅读 */
+.template-hint {
+  margin-top: 4px;
+}
+
+.template-hint .form-hint {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.template-variables {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 12px;
+}
+
+.template-variables li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.template-var {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  color: var(--brand-primary, #3b82f6);
+  background: rgba(59, 130, 246, 0.10);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.template-var-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Duration Hint */
 .duration-hint {
   display: block;
@@ -758,13 +803,62 @@ select.input {
   background: rgba(59, 130, 246, 0.12);
 }
 
-.channel-search-item .channel-name {
+.channel-item-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.channel-item-topline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-item-subline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.channel-search-item .channel-name {
   font-size: 14px;
   color: var(--text-primary);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.channel-search-item .channel-url {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 来源徽标：公网源 / 私有源，帮助区分同名不同源的频道 */
+.source-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.source-badge.public {
+  color: var(--brand-primary, #3b82f6);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.source-badge.private {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
 }
 
 .channel-search-item .channel-group {
@@ -783,4 +877,58 @@ select.input {
   text-align: center;
   color: var(--text-tertiary);
   font-size: 13px;
+}
+
+/* ===== M3U 文件上传拖拽区 ===== */
+.file-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 20px;
+  border: 2px dashed var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.file-dropzone:hover,
+.file-dropzone.dragging {
+  border-color: var(--brand-primary);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.file-dropzone .dropzone-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.file-dropzone .dropzone-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 文件已选中态 */
+.file-selected {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--brand-primary);
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.06);
+  color: var(--brand-primary);
+}
+
+.file-selected .file-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

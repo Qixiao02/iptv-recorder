@@ -6,7 +6,7 @@ import { getAllChannels } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
-import type { Schedule, CreateScheduleRequest } from '@/types';
+import type { Schedule, CreateScheduleRequest, Channel } from '@/types';
 import './Modal.css';
 
 interface ScheduleModalProps {
@@ -14,6 +14,22 @@ interface ScheduleModalProps {
   onClose: () => void;
   schedule?: Schedule | null;
 }
+
+// 来源标签文案：公网源 / 私有源（内网）。纯函数，放在组件外避免每次渲染重建。
+const sourceLabel = (ch: Channel, t: (key: string, opts?: Record<string, unknown>) => string) =>
+  ch?.source_visibility === 'private_server_only'
+    ? t('components:scheduleModal.sourcePrivate', { defaultValue: '私有源' })
+    : t('components:scheduleModal.sourcePublic', { defaultValue: '公网源' });
+
+// 来源对应的 badge 样式类
+const sourceBadgeClass = (ch: Channel) =>
+  ch?.source_visibility === 'private_server_only' ? 'source-badge private' : 'source-badge public';
+
+// URL 简短显示：去掉协议前缀，超出长度截断，帮助用户辨认内网/外网地址。
+const shortUrl = (url: string) => {
+  const stripped = url.replace(/^https?:\/\//i, '');
+  return stripped.length > 42 ? `${stripped.slice(0, 42)}…` : stripped;
+};
 
 interface ScheduleFormData extends CreateScheduleRequest {
   video_quality?: string;
@@ -87,21 +103,25 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     queryFn: getAllChannels,
   });
 
-  // 按关键词模糊过滤频道（名称 + 分组）
+  // 按关键词模糊过滤频道（名称 + 分组 + URL，URL 帮助区分同名不同源的频道）
   const filteredChannels = useMemo(() => {
     const all = channels ?? [];
     const kw = channelKeyword.trim().toLowerCase();
     if (!kw) return all;
     return all.filter((ch) =>
-      ch.name.toLowerCase().includes(kw) || (ch.group_name || '').toLowerCase().includes(kw)
+      ch.name.toLowerCase().includes(kw)
+      || (ch.group_name || '').toLowerCase().includes(kw)
+      || (ch.url || '').toLowerCase().includes(kw)
     );
   }, [channels, channelKeyword]);
 
-  // 选中的频道名（用于显示）
+  // 选中的频道名（用于显示，附带来源标签以便区分同名不同源）
   const selectedChannelName = useMemo(() => {
     const ch = channels?.find((c) => c.id === form.channel_id);
-    return ch ? `${ch.name}${ch.group_name ? ` (${ch.group_name})` : ''}` : '';
-  }, [channels, form.channel_id]);
+    if (!ch) return '';
+    const src = sourceLabel(ch, t);
+    return `${ch.name}${ch.group_name ? ` (${ch.group_name})` : ''} · ${src}`;
+  }, [channels, form.channel_id, t]);
 
   // 点击外部关闭搜索下拉
   useEffect(() => {
@@ -256,8 +276,16 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
                             setChannelKeyword('');
                           }}
                         >
-                          <span className="channel-name">{ch.name}</span>
-                          {ch.group_name && <span className="channel-group">{ch.group_name}</span>}
+                          <div className="channel-item-main">
+                            <div className="channel-item-topline">
+                              <span className="channel-name">{ch.name}</span>
+                              <span className={sourceBadgeClass(ch)}>{sourceLabel(ch, t)}</span>
+                            </div>
+                            <div className="channel-item-subline">
+                              {ch.group_name && <span className="channel-group">{ch.group_name}</span>}
+                              <code className="channel-url">{shortUrl(ch.url)}</code>
+                            </div>
+                          </div>
                           {ch.id === form.channel_id && <Check size={14} className="channel-check" />}
                         </button>
                       ))
@@ -384,9 +412,18 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
               value={form.output_template}
               onChange={(e) => setForm({ ...form, output_template: e.target.value })}
             />
-            <span className="form-hint">
-              {t('components:scheduleModal.outputTemplateHint')}
-            </span>
+            <div className="template-hint">
+              <span className="form-hint">{t('components:scheduleModal.outputTemplateHint')}</span>
+              <ul className="template-variables">
+                {(t('components:scheduleModal.outputTemplateVariables', { returnObjects: true }) as Array<{ token: string; desc: string }>)
+                  .map((v) => (
+                    <li key={v.token}>
+                      <code className="template-var">{v.token}</code>
+                      <span className="template-var-desc">{v.desc}</span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
           </div>
 
           {/* 自定义输出目录已移除：统一使用系统设置中的「录制保存路径」，避免每个计划重复配置 */}

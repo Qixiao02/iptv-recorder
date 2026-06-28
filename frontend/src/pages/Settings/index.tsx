@@ -24,6 +24,8 @@ import { buildConfigUpdateRequest } from './configPayload';
 import Markdown from '@/components/Markdown';
 // 以纯文本导入 README(构建前由 predev/prebuild 脚本从项目根同步到 src/about-readme.md)
 import readmeContent from '@/about-readme.md?raw';
+// 以纯文本导入 CHANGELOG(构建前由 predev/prebuild 脚本从项目根同步到 src/changelog.md)
+import changelogContent from '@/changelog.md?raw';
 import {
   Settings,
   Database,
@@ -49,12 +51,13 @@ import {
   Server,
   FileText,
   Calendar,
+  History,
   X,
 } from 'lucide-react';
 import '@/components/Modal.css';
 import './Settings.css';
 
-type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'operations' | 'account' | 'about';
+type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'operations' | 'account' | 'changelog' | 'about';
 
 const defaultConfig: SystemConfig = {
   server: { host: '127.0.0.1', port: 3000 },
@@ -90,6 +93,7 @@ export const SettingsPage: React.FC = () => {
     { key: 'notification', icon: <Bell size={18} />, label: t('settings:sections.notification') },
     ...(isAdmin ? [{ key: 'operations' as const, icon: <ShieldAlert size={18} />, label: t('settings:sections.operations') }] : []),
     { key: 'account', icon: <User size={18} />, label: t('settings:sections.account') },
+    { key: 'changelog', icon: <History size={18} />, label: t('settings:sections.changelog') },
     { key: 'about', icon: <Info size={18} />, label: t('settings:sections.about') },
   ];
 
@@ -797,6 +801,21 @@ export const SettingsPage: React.FC = () => {
           </div>
         );
 
+      case 'changelog':
+        return (
+          <div className="settings-section">
+            <div className="section-header-row">
+              <div>
+                <h2>{t('settings:sections.changelog')}</h2>
+                <p className="section-subtext">{t('settings:changelog.subtitle')}</p>
+              </div>
+            </div>
+            <div className="changelog-scroll">
+              <Markdown content={changelogContent} />
+            </div>
+          </div>
+        );
+
       case 'about':
         return (
           <div className="settings-section">
@@ -866,7 +885,7 @@ export const SettingsPage: React.FC = () => {
             <>
               {renderSection()}
 
-              {activeSection !== 'about' && activeSection !== 'account' && activeSection !== 'operations' && (
+              {activeSection !== 'about' && activeSection !== 'account' && activeSection !== 'operations' && activeSection !== 'changelog' && (
                 <div className="settings-actions">
                   {saveError && <div className="password-error">{saveError}</div>}
                   <div className="settings-actions-buttons">

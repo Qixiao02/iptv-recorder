@@ -29,6 +29,11 @@ pub struct TranscodeSession {
 pub struct ActiveTranscode {
     pub session: TranscodeSession,
     pub process: Child,
+    /// 最近一次被 HLS 客户端访问的时间（用于空闲回收）。
+    /// 与 `session.started_at` 区分开：后者是会话启动时刻，
+    /// 而 `last_accessed_at` 在每次 get_hls_file 时被刷新，
+    /// 只有真正"无人观看"的会话才会被回收。
+    pub last_accessed_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -113,13 +118,15 @@ impl TranscodeService {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             hls_base_dir,
-            session_timeout_secs: 300, // 5 分钟超时
+            // 仅在"空闲"(没有 HLS 请求)超过该时长时回收，避免边看边被杀。
+            session_timeout_secs: 600, // 10 分钟无访问才回收
             max_sessions_per_user: 2,
         }
     }
 
     pub fn start_cleanup_task(self: Arc<Self>) {
         tokio::spawn(async move {
+            // 回收检查间隔比空闲阈值短，保证能及时清理已关闭的预览。
             let interval = Duration::from_secs(60);
             loop {
                 tokio::time::sleep(interval).await;
@@ -188,13 +195,13 @@ impl TranscodeService {
 
         let mut selected_process = None;
         let mut startup_failure = None;
-        // 浏览器预览优先保证“可解码”而不是“最省 CPU”。
-        // 许多 IPTV/组播源虽然能快速 remux 成 TS HLS，但编码仍可能是 MPEG-2/AC3 等，
-        // 浏览器会持续拉片却始终无法真正起播。
+        // 预览优先保证”最快起播”:先用 FastRemux(纯 copy,不编码,秒起),
+        // 绝大多数 IPTV 源 remux 后浏览器即可播放。仅在 remux 失败时才降级到编码方案。
+        // (之前把 StableFmp4 排第一,导致每次预览都要等全编码超时,非常慢)
         let profiles = [
+            TranscodeProfile::FastRemux,
             TranscodeProfile::StableFmp4,
             TranscodeProfile::CompatibleMpegTs,
-            TranscodeProfile::FastRemux,
         ];
 
         for profile in profiles {
@@ -287,6 +294,7 @@ impl TranscodeService {
                 ActiveTranscode {
                     session: session.clone(),
                     process,
+                    last_accessed_at: Instant::now(),
                 },
             );
             info!("Total active sessions: {}", sessions.len());
@@ -381,23 +389,43 @@ impl TranscodeService {
         result
     }
 
+    /// 标记会话最近被访问（HLS 客户端拉取分片/播放列表时调用）。
+    /// 用于把空闲回收的计时器向后推延，避免边看边被 cleanup 杀掉。
+    /// 即使会话已被 cleanup 移除（例如刚超时），这里也安全地返回 false。
+    pub async fn touch_session(&self, session_id: &str) -> bool {
+        let mut sessions = self.sessions.write().await;
+        if let Some(active) = sessions.get_mut(session_id) {
+            active.last_accessed_at = Instant::now();
+            true
+        } else {
+            false
+        }
+    }
+
     /// 清理超时的会话
     #[allow(dead_code)]
     pub async fn cleanup_expired(&self) {
         let mut sessions = self.sessions.write().await;
         let now = Instant::now();
 
+        // 关键：基于"空闲时间"(last_accessed_at) 回收，而不是会话总寿命。
+        // 之前用 started_at + 300s 硬上限，会导致用户还在看的时候 FFmpeg
+        // 被强杀、HLS 目录被删，前端在 ~5 分钟时收到 manifestLoadError。
         let expired: Vec<String> = sessions
             .iter()
             .filter(|(_, active)| {
-                now.duration_since(active.session.started_at).as_secs() > self.session_timeout_secs
+                now.duration_since(active.last_accessed_at).as_secs() > self.session_timeout_secs
             })
             .map(|(id, _)| id.clone())
             .collect();
 
         for session_id in expired {
             if let Some(mut active) = sessions.remove(&session_id) {
-                info!("Cleaning up expired transcode session {}", session_id);
+                info!(
+                    "Cleaning up idle transcode session {} (idle {}s)",
+                    session_id,
+                    now.duration_since(active.last_accessed_at).as_secs()
+                );
 
                 if let Err(e) = active.process.kill().await {
                     warn!("Failed to kill FFmpeg process: {}", e);
@@ -502,9 +530,9 @@ fn spawn_ffmpeg(
                 "-thread_queue_size",
                 "1024",
                 "-analyzeduration",
-                "50M",
+                "10M",
                 "-probesize",
-                "50M",
+                "10M",
             ]);
         }
     }

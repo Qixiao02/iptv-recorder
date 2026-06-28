@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import Hls, { type ErrorData } from 'hls.js/light';
-import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
+import { X, PictureInPicture2, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
 import apiClient from '@/api/client';
 import { getStoredAuthToken } from '@/stores/authStore';
@@ -510,16 +510,32 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     onClose();
   }, [cleanupHls, cleanupTranscode, onClose]);
 
-  const handleOpenExternal = () => {
-    const token = getStoredAuthToken();
-    const serverStreamUrl = buildApiUrl(`/api/channels/${channelId}/stream${
-      token ? `?token=${encodeURIComponent(token)}` : ''
-    }`);
-    // 对于 UDP 流，使用转码后的 HLS 地址
-    // 对于其他流，使用原始地址
-    const urlToOpen = hlsUrlRef.current
-      || (source_visibility === 'private_server_only' ? serverStreamUrl : channelUrl);
-    window.open(urlToOpen, '_blank');
+  const handleTogglePiP = async () => {
+    const video = videoRef.current;
+    // 浏览器不支持画中画
+    if (!video || typeof document === 'undefined' || !document.pictureInPictureEnabled) {
+      toast.error(t('components:player.pipUnsupported'));
+      return;
+    }
+    // 已在画中画：退出
+    if (document.pictureInPictureElement) {
+      try {
+        await document.exitPictureInPicture();
+      } catch {
+        /* 忽略退出失败 */
+      }
+      return;
+    }
+    // 进入画中画：要求视频正在播放，否则浏览器会拒绝
+    try {
+      if (video.paused) {
+        await video.play().catch(() => {});
+      }
+      await video.requestPictureInPicture();
+    } catch (e) {
+      console.error('Failed to enter PiP:', e);
+      toast.error(t('components:player.pipFailed'));
+    }
   };
 
   const handleCopyUrl = () => {
@@ -555,10 +571,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             </button>
             <button
               className="btn btn-ghost btn-sm"
-              onClick={handleOpenExternal}
-              title={t('components:player.openExternalTitle')}
+              onClick={handleTogglePiP}
+              title={t('components:player.pipTitle')}
+              aria-label={t('components:player.pipTitle')}
             >
-              <ExternalLink size={16} />
+              <PictureInPicture2 size={16} />
             </button>
             <button className="modal-close" onClick={handleClose}>
               <X size={20} />

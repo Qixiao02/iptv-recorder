@@ -966,3 +966,80 @@
     justify-content: center;
   }
 }
+
+/* ===== 更新日志：独立滚动区域，参考 MSLX 的版本列表样式 ===== */
+.changelog-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 16px 4px 4px;
+  margin-top: 8px;
+  /* 细滚动条 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default, #cbd5e1) transparent;
+}
+
+.changelog-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.changelog-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.changelog-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-default, #cbd5e1);
+  border-radius: 4px;
+}
+
+.changelog-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary, #94a3b8);
+}
+
+/* 让 CHANGELOG 的标题/分隔线更紧凑，适合滚动列表 */
+.changelog-scroll .md-h {
+  margin: 18px 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.changelog-scroll .md-h2 {
+  font-size: 16px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 1;
+  padding: 6px 0;
+  margin-top: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.changelog-scroll .md-h3 {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 14px;
+}
+
+.changelog-scroll .md-hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 16px 0;
+}
+
+.changelog-scroll .md-ul {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.changelog-scroll .md-ul li {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 3px 0;
+}
+
+.changelog-scroll .md-p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0;
+}

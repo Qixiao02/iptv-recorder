@@ -32,7 +32,9 @@ export default {
     recordOnly: 'Record only',
     private: 'Private source',
     public: 'Public source',
+    all: 'All sources',
   },
+  sourceFilter: 'Filter by source',
   actions: {
     play: 'Play',
     test: 'Test connection',

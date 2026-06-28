@@ -32,7 +32,9 @@ export default {
     recordOnly: '仅录制',
     private: '私有源',
     public: '公网源',
+    all: '全部来源',
   },
+  sourceFilter: '按来源筛选',
   actions: {
     play: '播放',
     test: '测试连接',

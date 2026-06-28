@@ -9,6 +9,7 @@ export default {
     notification: '通知设置',
     operations: '运行维护',
     account: '账号设置',
+    changelog: '更新日志',
     about: '关于',
   },
   saveSettings: '保存设置',
@@ -136,8 +137,11 @@ export default {
     schedulerReloaded: '调度器已重载',
     schedulerReloadFailed: '调度器重载失败',
   },
+  changelog: {
+    subtitle: '查看 IPTV Recorder 历史版本的所有改动记录',
+  },
   about: {
-    version: '版本 0.1.0',
+    version: '版本 0.1.1',
     desc: '基于 Rust 的 IPTV M3U 管理与定时录制系统',
     website: '官方网站',
     checkUpdate: '检查更新',
