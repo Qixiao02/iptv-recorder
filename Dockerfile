@@ -49,7 +49,9 @@ WORKDIR /app
 COPY --from=builder /tmp/iptv-recorder /app/iptv-recorder
 COPY backend/config/default.toml /app/config/default.toml
 
-RUN mkdir -p /app/data/recordings /app/data/.tmp
+RUN mkdir -p /app/data/recordings /app/data/.tmp \
+    && addgroup -S app && adduser -S -G app app \
+    && chown -R app:app /app
 
 ENV IPTV__SERVER__HOST=0.0.0.0 \
     IPTV__SERVER__PORT=3000 \
@@ -59,6 +61,8 @@ ENV IPTV__SERVER__HOST=0.0.0.0 \
     IPTV__STORAGE__PREVIEW_TEMP_DIR=/dev/shm/iptv-recorder-hls \
     IPTV__RECORDER__EXECUTABLE=N_m3u8DL-RE \
     IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH=ffmpeg
+
+USER app
 
 EXPOSE 3000
 

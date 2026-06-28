@@ -2,7 +2,7 @@
 
 use axum::{
     body::Body,
-    extract::{Extension, Path, Query, State},
+    extract::{ConnectInfo, Extension, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
@@ -1093,21 +1093,33 @@ pub struct WsQuery {
 
 pub async fn ws_handler(
     ws: axum::extract::WebSocketUpgrade,
-    State((db, _scheduler, _process_manager, _config)): State<AppState>,
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<WsQuery>,
     Extension(event_bus): Extension<Arc<EventBus>>,
 ) -> impl IntoResponse {
+    // Origin 校验:只允许 CORS allowlist 内的源(防 CSWSH 跨站 WebSocket 劫持)
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        if !config.server.cors_origins.iter().any(|o| o == origin) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
     // 验证 token(含 token_version 吊销检查)
     let token = match &params.token {
         Some(t) => t,
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
     let auth_service = AuthService::new(db.clone());
-    if auth_service.verify_token_with_db(token).await.is_err() {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
+    let claims = match auth_service.verify_token_with_db(token).await {
+        Ok(c) => c,
+        Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
+    };
 
-    ws.on_upgrade(|socket| crate::api::websocket::handle_socket(socket, db, event_bus))
+    // 传 db + claims 进 handle_socket,用于连接后周期性复查 token_version
+    ws.on_upgrade(move |socket| {
+        crate::api::websocket::handle_socket(socket, db, event_bus, claims)
+    })
 }
 
 // ===== 辅助函数 =====
@@ -1598,19 +1610,40 @@ use axum::Json as AxumJson;
 /// 用户登录
 pub async fn login(
     State((db, _scheduler, _process_manager, _config)): State<AppState>,
+    Extension(login_limiter): Extension<std::sync::Arc<crate::api::rate_limit::LoginRateLimiter>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     AxumJson(req): AxumJson<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let client_ip = addr.ip().to_string();
+
+    // 限流检查:被锁定则直接拒绝
+    if let Err(msg) = login_limiter.check(&client_ip).await {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: "rate_limited".to_string(),
+                details: Some(msg),
+            }),
+        ));
+    }
+
     let auth_service = AuthService::new(db);
 
     match auth_service.login(req).await {
-        Ok(response) => Ok(Json(response)),
-        Err(e) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "unauthorized".to_string(),
-                details: Some(e.to_string()),
-            }),
-        )),
+        Ok(response) => {
+            login_limiter.record_success(&client_ip).await;
+            Ok(Json(response))
+        }
+        Err(e) => {
+            login_limiter.record_failure(&client_ip).await;
+            Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "unauthorized".to_string(),
+                    details: Some(e.to_string()),
+                }),
+            ))
+        }
     }
 }
 

@@ -51,6 +51,10 @@ pub struct ServerConfig {
     /// Workers 数量
     #[serde(default = "default_workers")]
     pub workers: usize,
+
+    /// CORS 允许的来源列表(逗号分隔或数组)。环境变量 IPTV__SERVER__CORS_ORIGINS
+    #[serde(default = "default_cors_origins")]
+    pub cors_origins: Vec<String>,
 }
 
 /// 数据库配置
@@ -217,6 +221,15 @@ fn default_workers() -> usize {
     4
 }
 
+fn default_cors_origins() -> Vec<String> {
+    vec![
+        "http://localhost:5173".to_string(),
+        "http://127.0.0.1:5173".to_string(),
+        "http://localhost:3033".to_string(),
+        "http://127.0.0.1:3033".to_string(),
+    ]
+}
+
 fn default_db_path() -> PathBuf {
     PathBuf::from("data/iptv-recorder.db")
 }
@@ -265,6 +278,7 @@ impl Default for ServerConfig {
             host: default_host(),
             port: default_port(),
             workers: default_workers(),
+            cors_origins: default_cors_origins(),
         }
     }
 }

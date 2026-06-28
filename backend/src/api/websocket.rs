@@ -53,7 +53,14 @@ fn event_to_ws_message(event: Event) -> WsMessage {
 }
 
 /// 处理 WebSocket 连接
-pub async fn handle_socket(socket: WebSocket, _db: Pool<Sqlite>, event_bus: Arc<EventBus>) {
+///
+/// `claims` 用于周期性复查 token_version(改密/降权后主动断开旧连接)。
+pub async fn handle_socket(
+    socket: WebSocket,
+    db: Pool<Sqlite>,
+    event_bus: Arc<EventBus>,
+    claims: crate::services::Claims,
+) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // 发送欢迎消息
@@ -129,6 +136,29 @@ pub async fn handle_socket(socket: WebSocket, _db: Pool<Sqlite>, event_bus: Arc<
                         break;
                     }
                     _ => {}
+                }
+            }
+
+            // 每 5 分钟复查 token_version:改密/降权后主动断开旧连接
+            _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
+                let current_tv: Option<i64> = sqlx::query_scalar(
+                    "SELECT token_version FROM users WHERE id = ?",
+                )
+                .bind(&claims.sub)
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten();
+
+                if current_tv != Some(claims.tv) {
+                    tracing::info!("WebSocket token revoked (token_version mismatch), closing");
+                    let _ = ws_sender.send(Message::Close(Some(
+                        axum::extract::ws::CloseFrame {
+                            code: 1008, // Policy Violation
+                            reason: "Token revoked".into(),
+                        },
+                    ))).await;
+                    break;
                 }
             }
         }

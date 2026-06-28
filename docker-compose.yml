@@ -22,6 +22,10 @@ services:
       IPTV__RECORDER__EXECUTABLE: N_m3u8DL-RE
       IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH: ffmpeg
       # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
       - ./backend/data:/app/data
       # ──────────────────────────────────────────────────────────────

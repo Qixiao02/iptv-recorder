@@ -14,12 +14,32 @@ interface MarkdownProps {
   content: string;
 }
 
-/** 转义 HTML 特殊字符,防止注入 */
+/** 转义 HTML 特殊字符,防止注入(含引号,防止属性逃逸) */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * URL 安全过滤:只允许 http/https/mailto/相对路径(#开头)。
+ * 拒绝 javascript:/data:/vbscript: 等危险 scheme,防 XSS。
+ */
+function sanitizeUrl(url: string): string {
+  const trimmed = url.trim().toLowerCase();
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('#')
+  ) {
+    return url;
+  }
+  // 危险 scheme,替换为安全占位
+  return '#';
 }
 
 /** 将标题文本转为 HTML id 锚点(与 GitHub 风格接近):中文保留、小写、空格转连字符 */
@@ -39,15 +59,21 @@ function renderInline(text: string): string {
   // 加粗 **text**
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   // 图片 ![alt](url) —— 必须在链接之前匹配,否则会被链接正则误吃
+  // URL 经过 sanitizeUrl 过滤危险 scheme
   out = out.replace(
     /!\[([^\]]*)\]\(([^)\s]+)\)/g,
-    '<img src="$2" alt="$1" class="md-img" loading="lazy" />'
+    (_m, alt, url) => `<img src="${sanitizeUrl(url)}" alt="${alt}" class="md-img" loading="lazy" />`
   );
   // 链接 [text](url)
   // # 锚点链接:用平滑滚动跳转,不开新标签
   out = out.replace(
     /\[([^\]]+)\]\(#[^)\s]+\)/g,
     '<a href="#" data-md-anchor="$1" class="md-anchor">$1</a>'
+  );
+  // 普通外部链接:URL 经过 sanitizeUrl,新标签打开
+  out = out.replace(
+    /\[([^\]]+)\]\(([^)\s]+)\)/g,
+    (_m, text, url) => `<a href="${sanitizeUrl(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`
   );
   // 普通外部链接:新标签打开
   out = out.replace(

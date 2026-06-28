@@ -127,7 +127,12 @@ async fn main() -> Result<()> {
     info!("🌐 Web server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    // into_make_service_with_connect_info 让 handler 能通过 ConnectInfo<SocketAddr> 获取客户端 IP(登录限流用)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

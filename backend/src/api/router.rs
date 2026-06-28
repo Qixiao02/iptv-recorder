@@ -1,13 +1,19 @@
 //! 路由定义
 
 use axum::{
+    http::HeaderValue,
     middleware,
     routing::{get, post},
     Extension, Router,
 };
 use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    services::ServeDir,
+    set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
 
 use crate::api::handlers::{
     batch_delete_channels,
@@ -201,7 +207,29 @@ pub async fn create_router(
         .layer(Extension(event_bus))
         // DB pool 同时作为 Extension 提供,供认证中间件校验 token_version
         .layer(Extension(db.clone()))
-        .layer(CorsLayer::permissive())
+        // 登录限流器(供 login handler 使用)
+        .layer(Extension(std::sync::Arc::new(
+            crate::api::rate_limit::LoginRateLimiter::new(),
+        )))
+        // CORS:收敛到显式 allowlist(config.server.cors_origins),不再 permissive
+        .layer(build_cors_layer(&config))
+        // 安全响应头
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
         // TraceLayer:自定义 span,屏蔽请求 URI 里的 token 参数(防止 JWT 进访问日志)
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &axum::extract::Request| {
@@ -228,4 +256,27 @@ pub async fn create_router(
         .with_state((db, scheduler, process_manager, config));
 
     Ok(app)
+}
+
+/// 从 config 构建 CORS 层:限定允许的来源、方法、头。
+fn build_cors_layer(config: &crate::config::Config) -> CorsLayer {
+    let origins: Vec<HeaderValue> = config
+        .server
+        .cors_origins
+        .iter()
+        .filter_map(|o| o.parse::<HeaderValue>().ok())
+        .collect();
+
+    if origins.is_empty() {
+        // 兜底:无配置时只允许 localhost
+        CorsLayer::new()
+            .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    }
 }
