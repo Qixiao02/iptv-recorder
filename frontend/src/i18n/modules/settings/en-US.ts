@@ -9,6 +9,7 @@ export default {
     notification: 'Notifications',
     operations: 'Operations',
     account: 'Account',
+    changelog: 'Changelog',
     about: 'About',
   },
   saveSettings: 'Save Settings',
@@ -136,8 +137,11 @@ export default {
     schedulerReloaded: 'Scheduler reloaded',
     schedulerReloadFailed: 'Scheduler reload failed',
   },
+  changelog: {
+    subtitle: 'View all changes across IPTV Recorder releases',
+  },
   about: {
-    version: 'Version 0.1.0',
+    version: 'Version 0.1.1',
     desc: 'Rust-based IPTV M3U management and scheduled recording system',
     website: 'Website',
     checkUpdate: 'Check Updates',
