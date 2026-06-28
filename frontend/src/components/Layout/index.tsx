@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,6 +9,8 @@ import { useSettingStore } from '@/stores/settingStore';
 import { useNotificationStore } from '@/stores/notificationStore';
 import { useToastStore } from '@/stores/toastStore';
 import { ToastContainer } from '@/components/ConfirmDialog';
+// 悬浮迷你播放器：全局常驻，跨路由保持播放（不遮挡背景页面）
+const MiniPlayer = lazy(() => import('@/components/MiniPlayer'));
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
@@ -111,22 +113,7 @@ export const Layout: React.FC = () => {
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon">
-            <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="32" height="32" rx="8" fill="url(#logo-gradient)" />
-              <path
-                d="M8 10H24M8 16H20M8 22H16"
-                stroke="white"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-              <circle cx="24" cy="22" r="4" fill="white" fillOpacity="0.9" />
-              <defs>
-                <linearGradient id="logo-gradient" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#3B82F6" />
-                  <stop offset="1" stopColor="#8B5CF6" />
-                </linearGradient>
-              </defs>
-            </svg>
+            <img src="/logo.png" alt="IPTV Recorder" />
           </div>
           {!sidebarCollapsed && (
             <span className="logo-text">IPTV Recorder</span>
@@ -337,6 +324,11 @@ export const Layout: React.FC = () => {
 
       {/* 全局 toast 容器:所有页面/弹窗共享,右上角弹出提示 */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* 悬浮迷你播放器:右下角常驻,跨路由保持,不遮挡背景 */}
+      <Suspense fallback={null}>
+        <MiniPlayer />
+      </Suspense>
     </div>
   );
 };

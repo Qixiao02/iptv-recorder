@@ -382,9 +382,11 @@
   display: none;
 }
 
-.about-logo svg {
-  width: 64px;
-  height: 64px;
+.about-logo img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  border-radius: 16px;
 }
 
 .about-info h3 {

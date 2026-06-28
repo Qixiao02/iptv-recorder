@@ -822,17 +822,7 @@ export const SettingsPage: React.FC = () => {
             <h2>{t('settings:sections.about')}</h2>
             <div className="about-card">
               <div className="about-logo">
-                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect width="48" height="48" rx="12" fill="url(#about-gradient)" />
-                  <path d="M12 15H36M12 24H30M12 33H24" stroke="white" strokeWidth="3" strokeLinecap="round" />
-                  <circle cx="36" cy="33" r="6" fill="white" fillOpacity="0.9" />
-                  <defs>
-                    <linearGradient id="about-gradient" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-                      <stop stopColor="#3B82F6" />
-                      <stop offset="1" stopColor="#8B5CF6" />
-                    </linearGradient>
-                  </defs>
-                </svg>
+                <img src="/logo.png" alt="IPTV Recorder" />
               </div>
               <div className="about-info">
                 <h3>IPTV Recorder</h3>
