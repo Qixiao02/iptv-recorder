@@ -9,7 +9,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::core::event::{Event, EventBus};
 use crate::models::{
-    ChannelStatusData, SystemAlertData, TaskProgressData, TaskUpdateData, WsMessage,
+    ChannelStatusData, NotificationData, SystemAlertData, TaskProgressData, TaskUpdateData,
+    WsMessage,
 };
 
 /// 将内部事件转换为 WebSocket 消息
@@ -35,6 +36,18 @@ fn event_to_ws_message(event: Event) -> WsMessage {
             level: e.level.to_string(),
             message: e.message,
             details: e.details,
+        }),
+        Event::Notification(e) => WsMessage::Notification(NotificationData {
+            id: e.id,
+            category: e.category,
+            level: e.level,
+            title: e.title,
+            message: e.message,
+            details: e.details,
+            task_id: e.task_id,
+            // 实时推送的新通知默认为未读
+            read: false,
+            created_at: e.created_at,
         }),
     }
 }

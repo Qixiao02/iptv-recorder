@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask, clearCompletedTasks, deleteTask } from '@/api/tasks';
 import { getAllChannels } from '@/api/channels';
 import { wsClient, type ConnectionState } from '@/api/websocket';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatBytes, formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
@@ -136,6 +137,10 @@ export const Tasks: React.FC = () => {
     mutationFn: cancelTask,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      toast.success(t('common:toast.taskCancelled'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -144,6 +149,10 @@ export const Tasks: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       setClearConfirm(false);
+      toast.success(t('common:toast.tasksCleared'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -152,6 +161,10 @@ export const Tasks: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       setDeleteConfirm({ isOpen: false, taskId: null });
+      toast.success(t('common:toast.taskDeleted'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 

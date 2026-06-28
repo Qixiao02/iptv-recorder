@@ -17,14 +17,15 @@ use crate::config::Config;
 use crate::core::event::EventBus;
 use crate::core::ProcessManager;
 use crate::models::{
-    AuditLog, Channel, CreateChannelRequest, CreateScheduleRequest, EpgProgram, EpgSource,
-    ErrorResponse, ImportM3UResponse, ManualRecordRequest, Schedule, SystemHealth, Task,
+    Channel, CreateChannelRequest, CreateScheduleRequest, EpgProgram, EpgSource, ErrorResponse,
+    ImportM3UResponse, ManualRecordRequest, Schedule, SystemHealth, Task,
 };
 use crate::services::{
     AuditService, AuthService, ChannelService, ChannelTestResult, Claims, CleanupService,
     ConfigService, ConfigUpdateRequest, CronTrigger, EpgService, ImportEpgRequest, M3UParser,
+    NotificationPaginationParams, NotificationService, PaginatedAuditLogs, PaginatedNotifications,
     PaginationParams, RecordingService, ScheduleService, SchedulerManager, ServiceContext,
-    UpcomingTask,
+    UnreadCount, UpcomingTask,
 };
 
 /// 应用状态
@@ -864,7 +865,7 @@ fn resolve_directory_query(path: Option<&str>) -> Result<PathBuf, anyhow::Error>
 fn list_windows_drives() -> Vec<DirectoryEntry> {
     #[cfg(windows)]
     {
-        ('A'..='Z')
+        let mut entries: Vec<DirectoryEntry> = ('A'..='Z')
             .filter_map(|letter| {
                 let path = format!("{}:\\", letter);
                 if std::path::Path::new(&path).is_dir() {
@@ -876,7 +877,34 @@ fn list_windows_drives() -> Vec<DirectoryEntry> {
                     None
                 }
             })
-            .collect()
+            .collect();
+
+        // 追加已映射的网络共享(UNC 路径),让用户能在根视图直接看到并进入网络位置。
+        // 通过 PowerShell Get-SmbMapping 列出当前用户的 SMB 映射;失败则静默跳过(不影响盘符列表)。
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-SmbMapping | Select-Object -ExpandProperty RemotePath | Sort-Object",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let share = line.trim();
+                    if !share.is_empty() && std::path::Path::new(share).is_dir() {
+                        entries.push(DirectoryEntry {
+                            name: format!("🌐 {}", share),
+                            path: share.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        entries
     }
 
     #[cfg(not(windows))]
@@ -898,13 +926,78 @@ pub async fn get_system_health(
 
 pub async fn list_audit_logs(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
-) -> Result<Json<Vec<AuditLog>>, (StatusCode, Json<ErrorResponse>)> {
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedAuditLogs>, (StatusCode, Json<ErrorResponse>)> {
     let service = AuditService::new(ServiceContext::new(db, config));
     service
-        .list_recent(200)
+        .list_paginated(params)
         .await
         .map(Json)
         .map_err(internal_error)
+}
+
+/// 分页查询应用内通知（最新在前）
+pub async fn list_notifications(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+    Query(params): Query<NotificationPaginationParams>,
+) -> Result<Json<PaginatedNotifications>, (StatusCode, Json<ErrorResponse>)> {
+    let service =
+        NotificationService::new(ServiceContext::new(db, config), Some(event_bus.sender()));
+    service
+        .list_paginated(params)
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+/// 未读通知数量
+pub async fn unread_notification_count(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+) -> Result<Json<UnreadCount>, (StatusCode, Json<ErrorResponse>)> {
+    let service =
+        NotificationService::new(ServiceContext::new(db, config), Some(event_bus.sender()));
+    service
+        .unread_count()
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+/// 标记单条通知已读
+pub async fn mark_notification_read(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let service =
+        NotificationService::new(ServiceContext::new(db, config), Some(event_bus.sender()));
+    let updated = service.mark_read(&id).await.map_err(internal_error)?;
+    Ok(Json(serde_json::json!({ "updated": updated })))
+}
+
+/// 全部通知标记已读
+pub async fn mark_all_notifications_read(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let service =
+        NotificationService::new(ServiceContext::new(db, config), Some(event_bus.sender()));
+    let updated = service.mark_all_read().await.map_err(internal_error)?;
+    Ok(Json(serde_json::json!({ "updated": updated })))
+}
+
+/// 删除单条通知
+pub async fn delete_notification(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(event_bus): Extension<Arc<EventBus>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let service =
+        NotificationService::new(ServiceContext::new(db, config), Some(event_bus.sender()));
+    let deleted = service.delete(&id).await.map_err(internal_error)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
 pub async fn run_cleanup(
@@ -1092,7 +1185,12 @@ pub async fn channel_stream(
         ));
     }
 
-    if channel.source_visibility != "private_server_only" {
+    // 安全校验:私有服务器场景(内网流)只校验 scheme,避免 file:// 等;
+    // 其它场景用严格 SSRF 校验(拦截内网/localhost/私有 IP)。
+    use crate::services::url_safety::assert_safe_url_scheme_only;
+    if channel.source_visibility == "private_server_only" {
+        assert_safe_url_scheme_only(&channel.url).map_err(bad_request_error)?;
+    } else {
         validate_proxy_url(&channel.url).await?;
     }
 
@@ -1172,101 +1270,37 @@ fn authorize_stream_proxy(
     })
 }
 
+/// 校验流代理 URL 是否安全(SSRF 防护):委托给 services::url_safety,
+/// 把 anyhow 错误转换为 HTTP 响应(保持原有错误码语义)。
 async fn validate_proxy_url(url: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    let parsed = url::Url::parse(url).map_err(|e| {
+    use crate::services::url_safety::assert_safe_url;
+
+    assert_safe_url(url).await.map_err(|e| {
+        let msg = e.to_string();
+        let status = if msg.contains("无效的 URL") || msg.contains("缺少主机名") || msg.contains("不支持") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        let code = if status == StatusCode::BAD_REQUEST {
+            "invalid_url"
+        } else {
+            "forbidden_target"
+        };
         (
-            StatusCode::BAD_REQUEST,
+            status,
             Json(ErrorResponse {
-                error: "invalid_url".to_string(),
-                details: Some(format!("无效的 URL: {}", e)),
+                error: code.to_string(),
+                details: Some(msg),
             }),
         )
-    })?;
-
-    match parsed.scheme() {
-        "http" | "https" => {}
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "invalid_url".to_string(),
-                    details: Some("仅允许代理 HTTP/HTTPS 地址".to_string()),
-                }),
-            ));
-        }
-    }
-
-    let host = parsed.host_str().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "invalid_url".to_string(),
-                details: Some("URL 缺少主机名".to_string()),
-            }),
-        )
-    })?;
-
-    if is_disallowed_hostname(host) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "forbidden_target".to_string(),
-                details: Some("不允许代理本地或内网地址".to_string()),
-            }),
-        ));
-    }
-
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let addresses = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|e| internal_error(anyhow::anyhow!("解析代理地址失败: {}", e)))?;
-
-    for address in addresses {
-        if is_private_ip(address.ip()) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "forbidden_target".to_string(),
-                    details: Some("不允许代理本地或内网地址".to_string()),
-                }),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn is_disallowed_hostname(host: &str) -> bool {
-    let normalized = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    normalized == "localhost"
-        || normalized.ends_with(".localhost")
-        || normalized.ends_with(".local")
-        || normalized.ends_with(".internal")
-}
-
-fn is_private_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || v4.is_unspecified()
-        }
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-                || v6.segments()[0] == 0x2001 && v6.segments()[1] == 0x0db8
-        }
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::url_safety::is_private_ip;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[tokio::test]

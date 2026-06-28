@@ -6,22 +6,47 @@ use crate::{
     },
     core::process::{ProcessManager, RecordingConfig, RecordingEngine},
     models::{Channel, ManualRecordRequest, Task},
-    services::{PostProcessor, ServiceContext},
+    services::{
+        notification::{
+            category as notif_cat, level as notif_lvl, NotificationService, NotifyRequest,
+        },
+        PostProcessor, ServiceContext,
+    },
 };
 use anyhow::Result;
 use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+/// 进程级录制准入锁。
+///
+/// 用于把「并发检查 → INSERT running」这段 check-then-act 串行化，
+/// 避免 cron 触发与 HTTP 手动录制、或多个 cron 同时进入时产生竞态：
+///   - 突破 `max_concurrent`
+///   - 同频道 / 同定时任务出现重复 running 记录
+///
+/// 注意：`RecordingService` 是每次请求现 new 的临时对象，没有跨请求共享状态，
+/// 因此这把锁必须是进程级静态单例，而不是挂在 service 实例上。
+///
+/// 临界区只覆盖「检查 + 插入任务记录」，不覆盖后续录制进程的生命周期；
+/// 插入完成后立即释放锁，不同频道仍可并发录制，吞吐不受影响。
+///
+/// 双重保险：DB 层的部分唯一索引（见 migration 0006）在锁失效或多实例时
+/// 仍会拒绝重复 running 记录。
+static ADMISSION_LOCK: TokioMutex<()> = TokioMutex::const_new(());
+
 /// 录制服务
+#[derive(Clone)]
 pub struct RecordingService {
     process_manager: Arc<ProcessManager>,
     ctx: ServiceContext,
     event_sender: Option<EventSender>,
 }
 
+#[derive(Clone)]
 struct RuntimeRecordingSettings {
     recorder_executable: PathBuf,
     ffmpeg_executable: PathBuf,
@@ -68,12 +93,9 @@ impl RecordingService {
             RecordingEngine::Ffmpeg => runtime_settings.ffmpeg_executable.clone(),
         };
         self.validate_recorder_executable(recording_engine, &recorder_executable)?;
-        self.validate_schedule_id(req.schedule_id.as_deref())
-            .await?;
-        self.ensure_recording_capacity(&req, &runtime_settings)
-            .await?;
 
-        // 构建输出文件路径（支持自定义目录和模板）
+        // 构建输出文件路径（支持自定义目录和模板）—— 锁外完成，避免在临界区
+        // 内做文件系统 I/O。准入串行化只覆盖「检查 → 插入 running」。
         let output_path = self
             .build_output_path(
                 &channel,
@@ -86,22 +108,10 @@ impl RecordingService {
             )
             .await?;
 
-        // 创建任务记录
-        sqlx::query(
-            r#"
-            INSERT INTO tasks (id, schedule_id, channel_id, status, started_at, output_path, created_at, updated_at)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&task_id)
-        .bind(&req.schedule_id)
-        .bind(&req.channel_id)
-        .bind(&now)
-        .bind(output_path.to_str().unwrap_or(&task_id))
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.ctx.db)
-        .await?;
+        // 并发准入临界区：锁内完成「检查 → INSERT running」，错误已映射为业务错误。
+        // DB 部分唯一索引（migration 0006）为最终兜底。详见 admit_recording 注释。
+        self.admit_recording(&task_id, &now, &output_path, &req, &runtime_settings)
+            .await?;
 
         // 构建录制配置
         let config = RecordingConfig {
@@ -146,6 +156,32 @@ impl RecordingService {
                 .ok();
 
                 error!("❌ 录制任务启动失败: task_id={}, error={}", task_id, e);
+
+                // 通知：录制启动失败（受 notification.on_failure 开关控制）
+                let svc = NotificationService::new(self.ctx.clone(), self.event_sender.clone());
+                if let Err(notif_err) = svc
+                    .notify(
+                        Some("notification.on_failure"),
+                        NotifyRequest {
+                            category: notif_cat::RECORDING_FAILED.to_string(),
+                            level: notif_lvl::ERROR.to_string(),
+                            title: format!("录制启动失败: {}", channel.name),
+                            message: format!("频道「{}」启动录制失败：{}", channel.name, error_msg),
+                            details: Some(
+                                serde_json::json!({
+                                    "channel": channel.name,
+                                    "error": error_msg,
+                                })
+                                .to_string(),
+                            ),
+                            task_id: Some(task_id.clone()),
+                        },
+                    )
+                    .await
+                {
+                    warn!("发送录制启动失败通知失败: {}", notif_err);
+                }
+
                 return Err(e);
             }
         };
@@ -158,6 +194,9 @@ impl RecordingService {
         let post_processor = post_processor.clone();
         let start_time = std::time::Instant::now();
         let event_sender_clone = self.event_sender.clone();
+        // 通知所需上下文：频道名 + 服务上下文（闭包内构造 NotificationService）
+        let channel_name_clone = channel.name.clone();
+        let notify_ctx = self.ctx.clone();
 
         tokio::spawn(async move {
             // 进度更新循环
@@ -409,6 +448,34 @@ impl RecordingService {
                             error_message: None,
                         }));
                     }
+
+                    // 通知：录制完成（受 notification.on_complete 开关控制）
+                    notify_terminal_task(
+                        notify_ctx.clone(),
+                        event_sender_clone.clone(),
+                        Some("notification.on_complete"),
+                        notif_cat::RECORDING_COMPLETE,
+                        notif_lvl::INFO,
+                        format!("录制完成: {}", channel_name_clone),
+                        format!(
+                            "频道「{}」录制完成，时长 {}，文件大小 {:.2} MB",
+                            channel_name_clone,
+                            format_duration(final_elapsed),
+                            file_size as f64 / 1024.0 / 1024.0
+                        ),
+                        Some(
+                            serde_json::json!({
+                                "channel": channel_name_clone,
+                                "duration_seconds": final_elapsed,
+                                "file_size": file_size,
+                                "output_path": final_path_str,
+                                "exit_code": exit_code,
+                            })
+                            .to_string(),
+                        ),
+                        task_id_clone.clone(),
+                    )
+                    .await;
                 }
                 crate::core::process::ProcessStatus::Failed { error } => {
                     let now = Utc::now().to_rfc3339();
@@ -460,6 +527,33 @@ impl RecordingService {
                             error_message: Some(error.clone()),
                         }));
                     }
+
+                    // 通知：录制失败（受 notification.on_failure 开关控制）
+                    notify_terminal_task(
+                        notify_ctx.clone(),
+                        event_sender_clone.clone(),
+                        Some("notification.on_failure"),
+                        notif_cat::RECORDING_FAILED,
+                        notif_lvl::ERROR,
+                        format!("录制失败: {}", channel_name_clone),
+                        format!(
+                            "频道「{}」录制失败：{}（已录制 {}）",
+                            channel_name_clone,
+                            error,
+                            format_duration(final_elapsed)
+                        ),
+                        Some(
+                            serde_json::json!({
+                                "channel": channel_name_clone,
+                                "duration_seconds": final_elapsed,
+                                "file_size": file_size,
+                                "error": error,
+                            })
+                            .to_string(),
+                        ),
+                        task_id_clone.clone(),
+                    )
+                    .await;
                 }
                 crate::core::process::ProcessStatus::Cancelled => {
                     let now = Utc::now().to_rfc3339();
@@ -590,6 +684,37 @@ impl RecordingService {
 
         if result.rows_affected() > 0 {
             info!("任务已取消: task_id={}", id);
+
+            // 通知：录制已取消（不受开关控制，主动操作仍记录以便追溯）
+            let channel = self.get_channel(&task.channel_id).await.ok();
+            let channel_name = channel
+                .as_ref()
+                .map(|c| c.name.as_str())
+                .unwrap_or("未知频道")
+                .to_string();
+            let svc = NotificationService::new(self.ctx.clone(), self.event_sender.clone());
+            if let Err(e) = svc
+                .notify(
+                    None,
+                    NotifyRequest {
+                        category: notif_cat::SYSTEM.to_string(),
+                        level: notif_lvl::INFO.to_string(),
+                        title: format!("录制已取消: {}", channel_name),
+                        message: format!("频道「{}」的录制任务已被手动取消", channel_name),
+                        details: Some(
+                            serde_json::json!({
+                                "channel": channel_name,
+                                "task_id": id,
+                            })
+                            .to_string(),
+                        ),
+                        task_id: Some(id.to_string()),
+                    },
+                )
+                .await
+            {
+                warn!("发送取消通知失败: {}", e);
+            }
         } else {
             info!("任务状态已更新或不存在: task_id={}", id);
         }
@@ -674,8 +799,27 @@ impl RecordingService {
         // 确定输出目录：优先使用自定义目录，否则使用系统默认
         let output_dir: String = if let Some(dir) = custom_dir {
             if !dir.is_empty() {
+                // 安全校验:自定义输出目录必须位于录制根目录之下,防止越界写文件。
+                // 把 custom_dir 规范化后与 default_recordings_dir 比对前缀。
+                let custom_path = std::path::PathBuf::from(dir);
+                // 相对路径基于录制根解析,确保不会逃逸到别处
+                let resolved = if custom_path.is_absolute() {
+                    custom_path
+                } else {
+                    default_recordings_dir.join(&custom_path)
+                };
+                // 规范化(目录可能尚不存在,用 lexical 规范化而非 canonicalize)
+                let normalized_custom = normalize_path_lexical(&resolved);
+                let normalized_root = normalize_path_lexical(default_recordings_dir);
+                if !normalized_custom.starts_with(&normalized_root) {
+                    anyhow::bail!(
+                        "自定义输出目录必须在录制根目录({})之下,拒绝越界路径: {}",
+                        default_recordings_dir.display(),
+                        dir
+                    );
+                }
                 info!("使用自定义输出目录: {}", dir);
-                dir.clone()
+                resolved.to_string_lossy().to_string()
             } else {
                 default_recordings_dir.to_string_lossy().to_string()
             }
@@ -947,6 +1091,73 @@ impl RecordingService {
         self.ensure_min_free_space(runtime_settings).await
     }
 
+    /// 并发准入临界区：在 `ADMISSION_LOCK` 保护下完成「检查 → 插入 running 记录」。
+    ///
+    /// 这是并发安全的核心。把这段 check-then-act 串行化，避免以下竞态
+    /// （cron 触发 / HTTP 手动录制 / 多 cron 同秒触发并发进入时）：
+    ///   - `max_concurrent` 被 COUNT 读取过期值而突破
+    ///   - 同频道 / 同定时任务出现重复 running 记录
+    ///
+    /// 设计要点：
+    ///   - **锁是进程级静态单例**（`ADMISSION_LOCK`），而非实例字段。因为
+    ///     `RecordingService` 是每次请求现 new 的临时对象，实例字段无法跨请求共享。
+    ///   - **临界区只覆盖「检查 + INSERT」**，不覆盖进程启动与监控循环；
+    ///     INSERT 完成立即释放锁。不同频道仍可并发录制，吞吐不受影响。
+    ///   - **DB 部分唯一索引（migration 0006）是兜底**：即便锁失效或多实例，
+    ///     DB 仍会拒绝重复 running 记录，触发 UNIQUE 冲突；此处映射为业务错误。
+    ///
+    /// 输入约定：调用方在锁外算好 `task_id` / `now` / `output_path`，
+    /// 本方法只负责锁内的纯 DB 操作，便于并发测试直接驱动。
+    async fn admit_recording(
+        &self,
+        task_id: &str,
+        now: &str,
+        output_path: &Path,
+        req: &ManualRecordRequest,
+        runtime_settings: &RuntimeRecordingSettings,
+    ) -> Result<()> {
+        let admission = ADMISSION_LOCK.lock().await;
+
+        self.validate_schedule_id(req.schedule_id.as_deref())
+            .await?;
+        self.ensure_recording_capacity(req, runtime_settings)
+            .await?;
+
+        let insert_result = sqlx::query(
+            r#"
+            INSERT INTO tasks (id, schedule_id, channel_id, status, started_at, output_path, created_at, updated_at)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
+            "#,
+        )
+        .bind(task_id)
+        .bind(&req.schedule_id)
+        .bind(&req.channel_id)
+        .bind(now)
+        .bind(output_path.to_str().unwrap_or(task_id))
+        .bind(now)
+        .bind(now)
+        .execute(&self.ctx.db)
+        .await;
+
+        // 任务记录已落库（或失败），临界区结束，释放锁。
+        drop(admission);
+
+        if let Err(e) = insert_result {
+            // DB 部分唯一索引（migration 0006）兜底：把 SQLite UNIQUE 冲突翻译成
+            // 友好的业务错误，避免裸 SQL 错误泄漏给前端。
+            let msg = e.to_string();
+            if is_unique_constraint_violation(&e) {
+                if msg.contains("uniq_running_per_schedule") {
+                    return Err(anyhow::anyhow!("该定时任务当前已有正在运行的录制任务"));
+                }
+                return Err(anyhow::anyhow!("该频道当前已有正在运行的录制任务"));
+            }
+            return Err(anyhow::anyhow!("创建录制任务失败: {}", msg));
+        }
+
+        Ok(())
+    }
+
     async fn count_running_tasks(&self) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
@@ -986,7 +1197,19 @@ impl RecordingService {
         // `df` 需要目标路径已存在；首次启动时录制目录可能还未创建。
         tokio::fs::create_dir_all(&runtime_settings.recordings_dir).await?;
 
-        let available = get_available_space(&runtime_settings.recordings_dir).await?;
+        // 磁盘空间探测可能失败(如网络共享不可达、权限不足)。探测失败时不应阻塞录制,
+        // 而是跳过空间预检并记录告警——录制本身仍可尝试进行。
+        let available = match get_available_space(&runtime_settings.recordings_dir).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    "跳过录制目录空间预检(探测失败,可能为网络路径): {} - {}",
+                    runtime_settings.recordings_dir.display(),
+                    e
+                );
+                return Ok(());
+            }
+        };
         if available < runtime_settings.min_free_space_bytes {
             return Err(anyhow::anyhow!(
                 "录制目录剩余空间不足: 当前 {:.2} GB，要求至少 {:.2} GB",
@@ -1143,6 +1366,23 @@ fn select_recording_engine(url: &str) -> RecordingEngine {
     }
 }
 
+/// 判断 sqlx 错误是否为 SQLite 的 UNIQUE 约束冲突。
+///
+/// 用于把 INSERT running 触发的部分唯一索引冲突（migration 0006）翻译成
+/// 友好的业务错误。SQLITE_CONSTRAINT_UNIQUE 的扩展错误码为 2067，
+/// SQLITE_CONSTRAINT 为 19。sqlx 的 SQLite 错误仅暴露消息字符串，
+/// 故同时匹配主码（19）与扩展码（2067）并辅以消息特征，提高鲁棒性。
+fn is_unique_constraint_violation(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            let code = db_err.code().map(|c| c.into_owned()).unwrap_or_default();
+            let msg = db_err.message();
+            code == "2067" || code == "19" || msg.contains("UNIQUE")
+        }
+        _ => false,
+    }
+}
+
 fn command_exists(executable: &Path) -> bool {
     if executable.components().count() > 1 {
         return executable.is_file();
@@ -1216,10 +1456,21 @@ async fn get_available_space_windows(path: &Path) -> Result<u64> {
     let canonical = tokio::fs::canonicalize(path)
         .await
         .unwrap_or_else(|_| path.to_path_buf());
-    let path_str = canonical.to_string_lossy();
+    let path_str = canonical.to_string_lossy().to_string();
+
+    // 处理网络路径(UNC \\server\share,canonicalize 后形如 \\?\UNC\server\share)。
+    // 这类路径没有盘符,无法用 Win32_LogicalDisk 按 DeviceID 查询。
+    if path_str.starts_with("\\\\") {
+        return get_unc_available_space(&path_str).await;
+    }
+
     let drive = path_str.chars().take(2).collect::<String>();
     if !drive.ends_with(':') {
-        return Ok(u64::MAX);
+        // 既非盘符也非 UNC,无法探测——返回错误而非谎报充足空间。
+        return Err(anyhow::anyhow!(
+            "无法解析磁盘标识(非盘符也非 UNC 路径): {}",
+            path_str
+        ));
     }
 
     let script = format!(
@@ -1243,6 +1494,128 @@ async fn get_available_space_windows(path: &Path) -> Result<u64> {
         .trim()
         .parse::<u64>()
         .map_err(|e| anyhow::anyhow!("无法解析 Windows 磁盘剩余空间: {}", e))
+}
+
+/// 探测 UNC 网络共享路径(\\server\share)的可用空间。
+///
+/// 网络共享无法用 Win32_LogicalDisk 按盘符查询。这里用 PowerShell 的
+/// `Get-PSDrive` 配合 UNC 路径(PSDrive 支持 UNC 的 Used/Free)来探测。
+/// 探测失败时返回错误(而非谎报无限空间),让调用方走"空间未知"的处理。
+#[cfg(windows)]
+async fn get_unc_available_space(unc_path: &str) -> Result<u64> {
+    // 还原成标准 UNC 形式(canonicalize 给的是 \\?\UNC\server\share,PSDrive 需 \\server\share)
+    let normal_unc = if let Some(rest) = unc_path.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", rest)
+    } else {
+        unc_path.to_string()
+    };
+
+    let script = format!(
+        "(Get-PSDrive -Name '{}' -ErrorAction SilentlyContinue).Free",
+        normal_unc.replace('\'', "''")
+    );
+    let output = tokio::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "查询网络共享可用空间失败(可能是只读/无权限): {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        // PSDrive 查不到该 UNC(未映射)——返回错误,让上层按"空间未知"处理
+        return Err(anyhow::anyhow!(
+            "无法获取网络共享 {} 的可用空间(可能未映射或不可达)",
+            normal_unc
+        ));
+    }
+    trimmed
+        .parse::<u64>()
+        .map_err(|e| anyhow::anyhow!("无法解析网络共享可用空间: {}", e))
+}
+
+/// 词法规范化路径(处理 . 和 ..,不要求路径存在)。
+/// 用于 output_dir 包含校验:避免 canonicalize 因目录不存在而失败。
+fn normalize_path_lexical(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+
+    let mut out = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::ParentDir => {
+                if out.last().map_or(false, |c| {
+                    !matches!(c, Component::RootDir | Component::Prefix(_))
+                }) {
+                    out.pop();
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out.iter().collect()
+}
+
+/// 将秒数格式化为人类可读时长，例如 `90 -> "1分30秒"`、`3725 -> "1小时2分5秒"`
+fn format_duration(total_secs: i64) -> String {
+    if total_secs <= 0 {
+        return "0秒".to_string();
+    }
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+    let mut parts = Vec::new();
+    if hours > 0 {
+        parts.push(format!("{}小时", hours));
+    }
+    if minutes > 0 {
+        parts.push(format!("{}分", minutes));
+    }
+    if secs > 0 || parts.is_empty() {
+        parts.push(format!("{}秒", secs));
+    }
+    parts.join("")
+}
+
+/// 任务终态通知发送（落库 + WebSocket 推送）。
+///
+/// 作为独立 async 函数而非闭包，避免 async 闭包 move 捕获导致的后续借用冲突。
+/// 调用方按需传入 ctx / event_sender 的 clone。
+#[allow(clippy::too_many_arguments)]
+async fn notify_terminal_task(
+    ctx: ServiceContext,
+    event_sender: Option<EventSender>,
+    config_key: Option<&str>,
+    category: &str,
+    level: &str,
+    title: String,
+    message: String,
+    details: Option<String>,
+    task_id: String,
+) {
+    let svc = NotificationService::new(ctx, event_sender);
+    if let Err(e) = svc
+        .notify(
+            config_key,
+            NotifyRequest {
+                category: category.to_string(),
+                level: level.to_string(),
+                title,
+                message,
+                details,
+                task_id: Some(task_id),
+            },
+        )
+        .await
+    {
+        warn!("发送任务通知失败: {}", e);
+    }
 }
 
 #[cfg(test)]
@@ -1585,7 +1958,7 @@ mod tests {
                 schedule_id: Some("schedule-42".to_string()),
                 duration_seconds: Some(1),
                 output_name: Some("scheduled-task".to_string()),
-                output_dir: Some(std::env::temp_dir().to_string_lossy().to_string()),
+                output_dir: None,
                 output_template: None,
                 video_quality: "best".to_string(),
                 audio_quality: "best".to_string(),
@@ -1716,6 +2089,268 @@ mod tests {
             .await
             .expect_err("global concurrency limit should be enforced");
         assert!(err.to_string().contains("已达到上限"));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// migration 0006 兜底：同一频道同时只能有一条 running 记录。
+    ///
+    /// 即便进程内 ADMISSION_LOCK 失效（或未来多实例），DB 部分唯一索引
+    /// 仍会拒绝第二条 running 插入。此测试验证索引确实生效。
+    #[tokio::test]
+    async fn unique_index_rejects_duplicate_running_task_for_same_channel() {
+        let (service, db_path) = test_service("recording-unique-channel").await;
+
+        // 第一条 running 应成功
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES ('task-a', 'channel-1', 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect("first running task should succeed");
+
+        // 同频道第二条 running 应被 UNIQUE 索引拒绝
+        let err = sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES ('task-b', 'channel-1', 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect_err("duplicate running task should be rejected");
+
+        assert!(
+            is_unique_constraint_violation(&err),
+            "expected UNIQUE constraint violation, got: {:?}",
+            err
+        );
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// 不同频道的 running 记录互不冲突，可并发录制。
+    #[tokio::test]
+    async fn unique_index_allows_concurrent_running_across_different_channels() {
+        let (service, db_path) = test_service("recording-unique-distinct").await;
+
+        // 插入第二个频道
+        sqlx::query(
+            r#"
+            INSERT INTO channels (id, name, url, group_name, created_at, updated_at)
+            VALUES ('channel-2', '测试频道2', 'https://example.com/live2.m3u8', 'Test',
+                    datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect("insert channel 2");
+
+        // 两个频道各一条 running，均应成功
+        for (task_id, channel_id) in [("task-a", "channel-1"), ("task-b", "channel-2")] {
+            sqlx::query(
+                r#"
+                INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+                VALUES (?, ?, 'running', datetime('now'), datetime('now'))
+                "#,
+            )
+            .bind(task_id)
+            .bind(channel_id)
+            .execute(&service.ctx.db)
+            .await
+            .expect("distinct channel running should succeed");
+        }
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// 任务进入终态（cancelled/completed/failed）后，部分唯一索引自动释放，
+    /// 该频道可立即开始下一次录制。与 cancel() 的「WHERE status='running'
+    /// 原子切到 cancelled」语义一致。
+    #[tokio::test]
+    async fn unique_index_releases_after_task_leaves_running_state() {
+        let (service, db_path) = test_service("recording-unique-release").await;
+
+        // 第一条 running
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES ('task-a', 'channel-1', 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect("first running");
+
+        // 切到 cancelled（模拟 cancel() 的原子状态切换）
+        sqlx::query("UPDATE tasks SET status = 'cancelled' WHERE id = 'task-a'")
+            .execute(&service.ctx.db)
+            .await
+            .expect("cancel");
+
+        // 同频道应能再次插入 running —— 索引已释放
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+            VALUES ('task-b', 'channel-1', 'running', datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect("should be able to start a new running task after cancel");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// 同一定时任务（schedule_id）同时只能有一条 running。
+    #[tokio::test]
+    async fn unique_index_rejects_duplicate_running_task_for_same_schedule() {
+        let (service, db_path) = test_service("recording-unique-schedule").await;
+        insert_schedule(&service.ctx.db, "schedule-dup", "channel-1").await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO tasks (id, schedule_id, channel_id, status, created_at, updated_at)
+            VALUES ('task-a', 'schedule-dup', 'channel-1', 'running',
+                    datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect("first scheduled running");
+
+        // 同 schedule 第二条 running 应被 uniq_running_per_schedule 拒绝
+        let err = sqlx::query(
+            r#"
+            INSERT INTO tasks (id, schedule_id, channel_id, status, created_at, updated_at)
+            VALUES ('task-b', 'schedule-dup', 'channel-1', 'running',
+                    datetime('now'), datetime('now'))
+            "#,
+        )
+        .execute(&service.ctx.db)
+        .await
+        .expect_err("duplicate scheduled running should be rejected");
+
+        assert!(is_unique_constraint_violation(&err));
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// 锁串行化核心测试：并发提交 N 个不同频道的 admit_recording，
+    /// 验证最终 running 数恰好等于 max_concurrent，绝不被突破。
+    ///
+    /// 这验证了索引单独防不住的语义——`max_concurrent` 是数量上限，无法用
+    /// UNIQUE 索引表达，只能靠 ADMISSION_LOCK 串行化「COUNT 检查 → INSERT」。
+    /// 若锁失效，并发下 COUNT 会读到过期值，导致远超 max_concurrent 的插入。
+    ///
+    /// 注意：ADMISSION_LOCK 是进程级单例。测试内部用 JoinSet 制造真实并发，
+    /// 每个任务进入锁后短暂 await（给其他任务争锁的机会），最大化暴露竞态。
+    #[tokio::test]
+    async fn admission_lock_caps_concurrent_admissions_at_max_concurrent() {
+        let (service, db_path) = test_service("recording-admission-concurrency").await;
+
+        // 准备 20 个不同频道（编号从 101 起，避开 test_service 预插的 channel-1）
+        const TOTAL: usize = 20;
+        const MAX_CONCURRENT: usize = 5;
+        const CH_BASE: usize = 101;
+        let settings = RuntimeRecordingSettings {
+            recorder_executable: PathBuf::from("recorder"),
+            ffmpeg_executable: PathBuf::from("ffmpeg"),
+            recordings_dir: std::env::temp_dir(),
+            default_duration_seconds: 60,
+            default_thread_count: 1,
+            max_concurrent: MAX_CONCURRENT,
+            min_free_space_bytes: 0,
+        };
+
+        for i in 0..TOTAL {
+            let cid = format!("channel-{}", CH_BASE + i);
+            sqlx::query(
+                r#"
+                INSERT INTO channels (id, name, url, group_name, created_at, updated_at)
+                VALUES (?, ?, ?, 'Test', datetime('now'), datetime('now'))
+                "#,
+            )
+            .bind(&cid)
+            .bind(format!("频道{cid}"))
+            .bind(format!("https://example.com/live{cid}.m3u8"))
+            .execute(&service.ctx.db)
+            .await
+            .expect("insert channel");
+        }
+
+        // 并发提交 20 个不同频道的 admit_recording
+        let mut join_set = tokio::task::JoinSet::new();
+        for i in 0..TOTAL {
+            let cid = format!("channel-{}", CH_BASE + i);
+            let task_id = format!("task-{cid}");
+            let service = service.clone();
+            let settings = settings.clone();
+            join_set.spawn(async move {
+                let req = ManualRecordRequest {
+                    channel_id: cid.clone(),
+                    schedule_id: None,
+                    duration_seconds: Some(60),
+                    output_name: None,
+                    output_dir: None,
+                    output_template: None,
+                    video_quality: "best".to_string(),
+                    audio_quality: "best".to_string(),
+                    max_speed: None,
+                    thread_count: Some(1),
+                    transcode_mode: Some("off".to_string()),
+                    transcode_preset: Some("medium".to_string()),
+                };
+                let now = chrono::Utc::now().to_rfc3339();
+                let output_path = std::env::temp_dir().join(&task_id);
+                let res = service
+                    .admit_recording(&task_id, &now, &output_path, &req, &settings)
+                    .await;
+                (task_id, res)
+            });
+        }
+
+        let mut ok_count = 0;
+        let mut err_count = 0;
+        let mut over_limit_err_count = 0;
+        while let Some(res) = join_set.join_next().await {
+            let (_task_id, result) = res.expect("task panicked");
+            match result {
+                Ok(()) => ok_count += 1,
+                Err(e) => {
+                    err_count += 1;
+                    if e.to_string().contains("已达到上限") {
+                        over_limit_err_count += 1;
+                    }
+                }
+            }
+        }
+
+        // 核心断言：成功的恰好是 max_concurrent 个，其余都被并发上限拦下
+        assert_eq!(
+            ok_count, MAX_CONCURRENT,
+            "成功准入数应等于 max_concurrent，实际 {ok_count}"
+        );
+        assert_eq!(
+            err_count,
+            TOTAL - MAX_CONCURRENT,
+            "失败数应等于 TOTAL - max_concurrent，实际 {err_count}"
+        );
+        assert_eq!(over_limit_err_count, TOTAL - MAX_CONCURRENT);
+
+        // DB 层复核：running 记录数精确等于 max_concurrent，绝未突破
+        let (running,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status = 'running'")
+                .fetch_one(&service.ctx.db)
+                .await
+                .expect("count running");
+        assert_eq!(
+            running as usize, MAX_CONCURRENT,
+            "DB 中 running 数应等于 max_concurrent，实际 {running}"
+        );
 
         let _ = tokio::fs::remove_file(db_path).await;
     }

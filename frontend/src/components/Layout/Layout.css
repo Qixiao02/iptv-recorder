@@ -322,6 +322,72 @@
   font-size: 13px;
 }
 
+/* 持久化通知：标题 / 已读态 / 分页 */
+.alert-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.alert-unread {
+  border-left: 3px solid var(--brand-primary);
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.02));
+}
+
+.alert-read {
+  opacity: 0.65;
+}
+
+.alert-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alert-dropdown-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color, rgba(0, 0, 0, 0.06));
+}
+
+.alert-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.alert-page-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+
+.alert-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.alert-page-info {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  min-width: 48px;
+  text-align: center;
+}
+
+.alert-item-main {
+  cursor: pointer;
+}
+
 .alert-info .alert-level {
   color: var(--brand-primary);
 }

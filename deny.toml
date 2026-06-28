@@ -1,0 +1,44 @@
+# cargo-deny 配置
+# 用法: cargo deny check(需先 cargo install cargo-deny)
+# 或单独审计漏洞: cargo audit
+
+[advisories]
+# 漏洞数据库源
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# 存在已知漏洞时构建失败(严格模式)
+deny = ["RUSTSEC-0000-0000"]
+# 忽略的漏洞(按需添加,格式: ID = "原因")
+ignore = []
+# 未修复漏洞也报错
+unmaintained = "all"
+# 当 advisory 数据库无法访问时报错
+fetch-deviable = true
+
+[licenses]
+# 允许的开源协议
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "0BSD",
+]
+# 协议不明的 crate 报错
+confidence-threshold = 0.8
+
+[bans]
+# 禁止重复依赖(同样的 crate 多个版本)
+multiple-versions = "warn"
+# 禁止通配符依赖
+wildcards = "deny"
+
+[sources]
+# 只允许从 crates.io 拉取
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://crates.io"]

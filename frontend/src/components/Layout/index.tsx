@@ -1,13 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useSettingStore } from '@/stores/settingStore';
+import { useNotificationStore } from '@/stores/notificationStore';
+import { useToastStore } from '@/stores/toastStore';
+import { ToastContainer } from '@/components/ConfirmDialog';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
+import { getNotifications } from '@/api/notifications';
 import {
   LayoutDashboard,
   Tv,
@@ -24,7 +29,6 @@ import {
   ChevronDown,
   Sun,
   Moon,
-  X,
 } from 'lucide-react';
 import './Layout.css';
 
@@ -46,16 +50,31 @@ export const Layout: React.FC = () => {
     setSidebarCollapsed,
     alerts,
     markAllAlertsRead,
-    dismissAlert,
   } = useUIStore();
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
   const { language, setLanguage } = useSettingStore();
+  const { unreadCount: persistentUnreadCount, markRead, markAllRead } = useNotificationStore();
+  const { toasts, removeToast } = useToastStore();
+  const queryClient = useQueryClient();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAlertMenu, setShowAlertMenu] = useState(false);
+  const [notifPage, setNotifPage] = useState(1);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const alertMenuRef = useRef<HTMLDivElement>(null);
   const unreadAlertCount = alerts.filter((alert) => !alert.read).length;
+  // 角标：持久化未读为主，session 告警作为补充（不丢历史实时流）
+  const badgeCount = persistentUnreadCount + unreadAlertCount;
+
+  // 持久化通知分页查询（铃铛下拉打开时展示）
+  const { data: notifData, isFetching: notifLoading } = useQuery({
+    queryKey: ['notifications', notifPage],
+    queryFn: () => getNotifications({ page: notifPage, page_size: 10 }),
+    enabled: showAlertMenu,
+    placeholderData: (prev) => prev,
+  });
+  const notifItems = notifData?.items ?? [];
+  const notifTotalPages = notifData?.total_pages ?? 1;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -165,14 +184,21 @@ export const Layout: React.FC = () => {
                 onClick={() => {
                   const nextOpen = !showAlertMenu;
                   setShowAlertMenu(nextOpen);
-                  if (!showAlertMenu) {
+                  if (nextOpen) {
+                    setNotifPage(1);
+                    // 打开即视为已查看：标记全部已读（持久化）
+                    if (persistentUnreadCount > 0) {
+                      markAllRead().then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                      });
+                    }
                     markAllAlertsRead();
                   }
                 }}
               >
                 <Bell size={18} />
-                {unreadAlertCount > 0 && (
-                  <span className="notification-badge">{Math.min(unreadAlertCount, 9)}</span>
+                {badgeCount > 0 && (
+                  <span className="notification-badge">{Math.min(badgeCount, 9)}</span>
                 )}
               </button>
 
@@ -180,38 +206,74 @@ export const Layout: React.FC = () => {
                 <div className="alert-dropdown">
                   <div className="alert-dropdown-header">
                     <span>{t('layout:alerts.title')}</span>
-                    {alerts.length > 0 && (
-                      <button className="alert-clear-btn" onClick={markAllAlertsRead}>
-                        {t('layout:alerts.markAllRead')}
-                      </button>
-                    )}
+                    <div className="alert-header-actions">
+                      {persistentUnreadCount > 0 && (
+                        <button
+                          className="alert-clear-btn"
+                          onClick={() => {
+                            markAllRead().then(() => {
+                              queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                            });
+                          }}
+                        >
+                          {t('layout:alerts.markAllRead')}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="alert-dropdown-divider" />
-                  {alerts.length > 0 ? (
-                    <div className="alert-list">
-                      {alerts.map((alert) => (
-                        <div key={alert.id} className={`alert-item alert-${alert.level}`}>
-                          <div className="alert-item-main">
-                            <div className="alert-item-top">
-                              <span className="alert-level">{t(`layout:alerts.levels.${alert.level}`)}</span>
-                              <span className="alert-time">
-                                {formatShortDateTime(alert.created_at, i18n.language as AppLanguage)}
-                              </span>
-                            </div>
-                            <div className="alert-message">{alert.message}</div>
-                            {alert.details && (
-                              <div className="alert-details">{alert.details}</div>
-                            )}
-                          </div>
-                          <button
-                            className="alert-dismiss-btn"
-                            onClick={() => dismissAlert(alert.id)}
+                  {notifLoading && notifItems.length === 0 ? (
+                    <div className="alert-empty">{t('common:loading', { defaultValue: 'Loading…' })}</div>
+                  ) : notifItems.length > 0 ? (
+                    <>
+                      <div className="alert-list">
+                        {notifItems.map((n) => (
+                          <div
+                            key={n.id}
+                            className={`alert-item alert-${n.level} ${n.read ? 'alert-read' : 'alert-unread'}`}
+                            onClick={() => {
+                              if (!n.read) {
+                                markRead(n.id).then(() => {
+                                  queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                                });
+                              }
+                            }}
                           >
-                            <X size={14} />
+                            <div className="alert-item-main">
+                              <div className="alert-item-top">
+                                <span className="alert-level">{t(`layout:alerts.categories.${n.category}`, { defaultValue: n.category })}</span>
+                                <span className="alert-time">
+                                  {formatShortDateTime(n.created_at, i18n.language as AppLanguage)}
+                                </span>
+                              </div>
+                              <div className="alert-title">{n.title}</div>
+                              <div className="alert-message">{n.message}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {notifTotalPages > 1 && (
+                        <div className="alert-dropdown-footer">
+                          <button
+                            className="alert-page-btn"
+                            disabled={notifPage <= 1}
+                            onClick={() => setNotifPage((p) => Math.max(1, p - 1))}
+                          >
+                            <ChevronLeft size={14} />
+                          </button>
+                          <span className="alert-page-info">
+                            {notifPage} / {notifTotalPages}
+                          </span>
+                          <button
+                            className="alert-page-btn"
+                            disabled={notifPage >= notifTotalPages}
+                            onClick={() => setNotifPage((p) => Math.min(notifTotalPages, p + 1))}
+                          >
+                            <ChevronRight size={14} />
                           </button>
                         </div>
-                      ))}
-                    </div>
+                      )}
+                    </>
                   ) : (
                     <div className="alert-empty">{t('layout:alerts.empty')}</div>
                   )}
@@ -272,6 +334,9 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      {/* 全局 toast 容器:所有页面/弹窗共享,右上角弹出提示 */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 };

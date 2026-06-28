@@ -61,7 +61,8 @@ thiserror = "2.0"
 
 # Authentication
 bcrypt = "0.16"
-jsonwebtoken = "9.3"
+# jsonwebtoken 10.x 需显式启用 crypto provider(rust_crypto),否则启动报错
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # Utilities
 regex = "1.11"

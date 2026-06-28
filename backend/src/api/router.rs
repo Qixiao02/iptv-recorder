@@ -18,6 +18,7 @@ use crate::api::handlers::{
     create_channel,
     create_schedule,
     delete_channel,
+    delete_notification,
     delete_schedule,
     delete_task,
     get_channel,
@@ -41,6 +42,7 @@ use crate::api::handlers::{
     // EPG 相关
     list_epg_sources,
     list_groups,
+    list_notifications,
     // 计划相关
     list_schedules,
     list_server_directories,
@@ -48,6 +50,8 @@ use crate::api::handlers::{
     list_tasks,
     // 认证相关
     login,
+    mark_all_notifications_read,
+    mark_notification_read,
     reload_scheduler,
     run_cleanup,
     start_manual_record,
@@ -58,6 +62,7 @@ use crate::api::handlers::{
     stream_proxy,
     test_channel,
     toggle_schedule,
+    unread_notification_count,
     update_channel,
     update_config,
     update_profile,
@@ -125,9 +130,12 @@ pub async fn create_router(
         // ===== EPG API =====
         .route("/api/epg/sources", get(list_epg_sources))
         .route("/api/epg/programs", get(list_epg_programs))
-        // ===== 转码 API =====
-        .route("/api/transcode/start", post(start_transcode))
-        .route("/api/transcode/{session_id}", post(stop_transcode))
+        // ===== 通知 API（读） =====
+        .route("/api/notifications", get(list_notifications))
+        .route(
+            "/api/notifications/unread-count",
+            get(unread_notification_count),
+        )
         // 添加认证中间件
         .layer(middleware::from_fn(auth_middleware));
 
@@ -152,15 +160,29 @@ pub async fn create_router(
         .route("/api/tasks/{id}/cancel", post(cancel_task))
         .route("/api/tasks/manual", post(start_manual_record))
         .route("/api/scheduler/reload", post(reload_scheduler))
-        .route("/api/config", post(update_config))
-        .route("/api/system/directories", get(list_server_directories))
+        // ===== 转码 API（资源消耗型,提到 operator） =====
+        .route("/api/transcode/start", post(start_transcode))
+        .route("/api/transcode/{session_id}", post(stop_transcode))
         .route("/api/system/cleanup/run", post(run_cleanup))
         .route("/api/epg/sources", post(import_epg_source))
+        // ===== 通知 API（写） =====
+        .route(
+            "/api/notifications/read-all",
+            post(mark_all_notifications_read),
+        )
+        .route("/api/notifications/{id}/read", post(mark_notification_read))
+        .route(
+            "/api/notifications/{id}",
+            axum::routing::delete(delete_notification),
+        )
         // 添加认证中间件
         .layer(middleware::from_fn(operator_middleware))
         .layer(middleware::from_fn(auth_middleware));
 
     let admin_routes = Router::new()
+        // 修改配置可重定向可执行文件(命令执行面),目录枚举泄露文件系统结构,均为 admin 专属
+        .route("/api/config", post(update_config))
+        .route("/api/system/directories", get(list_server_directories))
         .route("/api/system/health", get(get_system_health))
         .route("/api/audit/logs", get(list_audit_logs))
         .layer(middleware::from_fn(admin_middleware))

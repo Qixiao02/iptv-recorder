@@ -135,8 +135,8 @@
 }
 
 .task-card.recording {
-  border-color: rgba(244, 63, 94, 0.3);
-  background: linear-gradient(135deg, rgba(244, 63, 94, 0.05) 0%, transparent 100%);
+  border-color: rgba(194, 65, 12, 0.3);
+  background: linear-gradient(135deg, rgba(194, 65, 12, 0.05) 0%, transparent 100%);
 }
 
 .task-left {
@@ -157,9 +157,17 @@
 }
 
 .task-status-indicator.recording {
-  background: rgba(244, 63, 94, 0.15);
-  color: var(--color-recording);
+  background: rgba(194, 65, 12, 0.12);
+  border: 1px solid rgba(194, 65, 12, 0.35);
+  color: #C2410C;
   animation: pulse-recording 2s ease-in-out infinite;
+}
+
+/* 深色主题:图标用亮黄,背景用深橙半透明,保证反差 */
+[data-theme="dark"] .task-status-indicator.recording {
+  background: rgba(234, 88, 12, 0.18);
+  border-color: rgba(250, 204, 21, 0.4);
+  color: #FACC15;
 }
 
 .task-status-indicator.success {

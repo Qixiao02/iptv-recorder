@@ -9,7 +9,7 @@ export const buildConfigUpdateRequest = (config: SystemConfig): ConfigUpdateRequ
   },
   recording: {
     default_duration_minutes: config.recording.default_duration_minutes,
-    n_m3u8dl_re_path: config.recording.n_m3u8dl_re_path,
+    // n_m3u8dl_re_path 由后端/Docker 镜像内部集成，不开放修改，提交时不发送
     max_retry: config.recording.max_retry,
     thread_count: config.recording.thread_count,
   },

@@ -11,14 +11,20 @@ export default {
     switchToDark: '切换到暗色模式',
   },
   alerts: {
-    title: '系统告警',
+    title: '通知中心',
     markAllRead: '全部已读',
-    empty: '暂无系统告警',
+    empty: '暂无通知',
     levels: {
       info: '信息',
       warning: '警告',
       error: '错误',
       critical: '严重',
+    },
+    categories: {
+      recording_complete: '录制完成',
+      recording_failed: '录制失败',
+      disk_warning: '磁盘告警',
+      system: '系统',
     },
   },
   language: {

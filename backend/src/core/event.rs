@@ -22,6 +22,9 @@ pub enum Event {
 
     /// 系统告警
     SystemAlert(SystemAlertEvent),
+
+    /// 应用内通知（持久化通知中心，区别于一次性系统告警）
+    Notification(NotificationEvent),
 }
 
 /// 任务状态更新事件
@@ -55,6 +58,19 @@ pub struct SystemAlertEvent {
     pub level: AlertLevel,
     pub message: String,
     pub details: Option<String>,
+}
+
+/// 应用内通知事件（携带已落库的通知完整数据）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationEvent {
+    pub id: String,
+    pub category: String,
+    pub level: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub task_id: Option<String>,
+    pub created_at: String,
 }
 
 /// 任务状态

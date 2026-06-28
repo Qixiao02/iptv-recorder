@@ -62,6 +62,9 @@ pub struct StorageConfigUpdate {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecordingConfigUpdate {
     pub default_duration_minutes: Option<u32>,
+    /// 录制工具路径不再开放修改（由后端/Docker 镜像内部集成）。
+    /// 字段保留是为了向前兼容旧前端请求的反序列化，但 update_config 会忽略它。
+    #[allow(dead_code)]
     pub n_m3u8dl_re_path: Option<String>,
     pub max_retry: Option<u32>,
     pub thread_count: Option<u32>,
@@ -164,6 +167,8 @@ impl ConfigService {
         // 更新存储配置
         if let Some(storage) = req.storage {
             if let Some(v) = storage.recordings_path {
+                // 保存前校验录制路径:必须可创建且可写,避免配错导致录制启动才失败
+                validate_recordings_path(&v)?;
                 self.set_value("storage.recordings_path", &v).await?;
             }
             if let Some(v) = storage.auto_cleanup_days {
@@ -182,9 +187,8 @@ impl ConfigService {
                 self.set_value("recording.default_duration_minutes", &v.to_string())
                     .await?;
             }
-            if let Some(v) = recording.n_m3u8dl_re_path {
-                self.set_value("recording.n_m3u8dl_re_path", &v).await?;
-            }
+            // n_m3u8dl_re_path 不再开放给用户修改——录制工具由后端/Docker 镜像
+            // 内部集成，用户改错会导致录制全废。保持后端默认值，忽略前端传入。
             if let Some(v) = recording.max_retry {
                 self.set_value("recording.max_retry", &v.to_string())
                     .await?;
@@ -266,4 +270,46 @@ impl ConfigService {
 
         Ok(())
     }
+}
+
+/// 校验录制保存路径是否可访问、可写。
+///
+/// 支持本地路径和网络路径(Windows UNC `\\server\share`、Linux 挂载点 `/mnt/nas`)。
+/// 校验步骤:
+/// 1. 非空检查(空路径直接拒绝)
+/// 2. 尝试创建目录(不存在则 create_dir_all,已存在则幂等)
+/// 3. 写入并删除一个临时文件,确认该路径确实可写(避免只读目录/权限不足)
+///
+/// 校验在保存配置时进行,而非等到录制启动才暴露问题。
+fn validate_recordings_path(path: &str) -> Result<()> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("录制保存路径不能为空");
+    }
+
+    let dir = std::path::Path::new(trimmed);
+
+    // 1. 确保目录存在(不存在则创建)
+    std::fs::create_dir_all(dir).map_err(|e| {
+        anyhow::anyhow!(
+            "录制保存路径无法访问或创建: {} (路径: {})。如果是网络路径,请确认已挂载/映射且凭据有效",
+            e,
+            trimmed
+        )
+    })?;
+
+    // 2. 写临时文件验证可写权限
+    let probe = dir.join(format!(".iptv-recorder-probe-{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&probe, b"probe").map_err(|e| {
+        // 清理可能残留的探测文件
+        let _ = std::fs::remove_file(&probe);
+        anyhow::anyhow!(
+            "录制保存路径不可写: {} (路径: {})。请检查目录权限",
+            e,
+            trimmed
+        )
+    })?;
+    let _ = std::fs::remove_file(&probe);
+
+    Ok(())
 }

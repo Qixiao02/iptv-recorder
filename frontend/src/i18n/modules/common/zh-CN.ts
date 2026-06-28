@@ -38,4 +38,30 @@ export default {
     cancelled: '已取消',
   },
   channelFallback: '频道 {{id}}...',
+  toast: {
+    // 频道
+    channelCreated: '频道已创建',
+    channelUpdated: '频道已更新',
+    channelDeleted: '频道已删除',
+    channelsBatchDeleted: '已批量删除 {{count}} 个频道',
+    channelTestOk: '频道连通正常',
+    // 计划
+    scheduleCreated: '录制计划已创建',
+    scheduleUpdated: '录制计划已更新',
+    scheduleDeleted: '录制计划已删除',
+    scheduleToggled: '计划状态已切换',
+    // 任务
+    taskCancelled: '任务已取消',
+    tasksCleared: '已完成任务已清除',
+    taskDeleted: '任务记录已删除',
+    manualRecordStarted: '录制已启动',
+    // 设置
+    configSaved: '设置已保存',
+    passwordChanged: '密码修改成功',
+    cleanupDone: '已清理 {{count}} 条过期记录',
+    schedulerReloaded: '调度器已重新加载',
+    // 通用
+    operationFailed: '操作失败:{{message}}',
+    copiedToClipboard: '已复制到剪贴板',
+  },
 };

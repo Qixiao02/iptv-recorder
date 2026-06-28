@@ -61,7 +61,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true,
     allowedHosts: true,
+    // On Windows bind-mounts into a Linux container, native fs events don't
+    // propagate, so HMR silently stops refreshing. Enable polling only when
+    // explicitly requested to keep local (host) dev unchanged.
+    watch: process.env.VITE_WATCH_POLLING
+      ? { usePolling: true, interval: 300 }
+      : undefined,
     proxy: {
       '/api': {
         target: process.env.VITE_BACKEND_URL || 'http://127.0.0.1:3033',

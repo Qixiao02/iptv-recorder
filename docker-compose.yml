@@ -5,12 +5,14 @@ services:
       dockerfile: Dockerfile
     container_name: iptv-recorder-backend
     restart: unless-stopped
+    # 密钥与初始密码从 .env 读取(首次运行前用 scripts/generate-env 生成)
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "3033:3000"
     environment:
       RUST_LOG: info
-      IPTV_JWT_SECRET: dev-local-jwt-secret-iptv-recorder-2026-change-me
-      IPTV_INITIAL_ADMIN_PASSWORD: admin123456
       IPTV__SERVER__HOST: 0.0.0.0
       IPTV__SERVER__PORT: 3000
       IPTV__DATABASE__PATH: /app/data/iptv-recorder.db
@@ -19,8 +21,22 @@ services:
       IPTV__STORAGE__PREVIEW_TEMP_DIR: /dev/shm/iptv-recorder-hls
       IPTV__RECORDER__EXECUTABLE: N_m3u8DL-RE
       IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH: ffmpeg
+      # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
     volumes:
       - ./backend/data:/app/data
+      # ──────────────────────────────────────────────────────────────
+      # 宿主机路径映射:把宿主机文件系统挂进容器,让 Web UI 能浏览并选择宿主机路径。
+      #
+      # 【Windows Docker Desktop】(需在 Settings→Resources→File Sharing 启用对应盘符):
+      #   整盘挂载,左侧用 /<盘符>/ 形式(Docker Desktop 会自动映射到宿主盘符)
+      # 【Linux 宿主机】:
+      #   - /:/mnt/host             # 挂载整个根目录(可访问任意宿主路径,安全边界较低)
+      #   或按需:  - /home:/mnt/host/home
+      #
+      # 挂载后,在 Web UI「设置 > 存储」点"选择目录",从 /mnt/host 开始浏览即可选到宿主机路径。
+      # ──────────────────────────────────────────────────────────────
+      - /d:/mnt/host/d
+      - /c:/mnt/host/c
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
       interval: 30s

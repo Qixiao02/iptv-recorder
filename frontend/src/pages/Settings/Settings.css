@@ -111,6 +111,16 @@
   flex-shrink: 0;
 }
 
+/* 右侧控件组:输入框 + 提示文字竖排,与左侧 setting-info 对齐 */
+.setting-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 360px;
+  max-width: 60%;
+}
+
 /* Input with suffix */
 .input-with-suffix {
   display: flex;
@@ -193,6 +203,35 @@
 .directory-toolbar {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* 手动输入路径(网络路径 UNC / 挂载点) */
+.directory-manual {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-width: 220px;
+  align-items: center;
+}
+
+.directory-manual .input {
+  flex: 1;
+}
+
+.input-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* 设置项下方的补充提示 */
+.setting-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 
 .directory-list {
@@ -326,6 +365,21 @@
   background: var(--bg-panel);
   border-radius: 12px;
   margin-bottom: 24px;
+}
+
+/* README 渲染容器：放在 about-card 下方，独立卡片 */
+.about-readme {
+  padding: 20px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* README 内首个 H1 标题与 about-card 重复，隐藏避免重复 */
+.about-readme .markdown-body .md-h1:first-child {
+  display: none;
 }
 
 .about-logo svg {
@@ -698,6 +752,11 @@
     width: 100%;
   }
 
+  .setting-control-group {
+    width: 100%;
+    max-width: 100%;
+  }
+
   .audit-details-cell {
     max-width: 200px;
   }
@@ -828,4 +887,82 @@
   color: #f87171;
   font-size: 14px;
   margin-bottom: 20px;
+}
+
+/* ===== 审计日志分页(自包含,不依赖 Channels.css 的 .pagination 基类) ===== */
+.pagination-audit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px 4px;
+  margin-top: 12px;
+}
+
+.pagination-total {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-btn {
+  min-width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 60px;
+  text-align: center;
+}
+
+.pagination-size {
+  padding: 6px 10px;
+  background: var(--bg-input, var(--bg-card));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pagination-size:focus {
+  outline: none;
+  border-color: var(--brand-primary);
+}
+
+@media (max-width: 768px) {
+  .pagination-audit {
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
 }

@@ -665,3 +665,122 @@ select.input {
   position: absolute;
   left: -14px;
 }
+
+/* ===== 可搜索频道选择器 ===== */
+.channel-search-select {
+  position: relative;
+  width: 100%;
+}
+
+.channel-search-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.channel-search-trigger .placeholder {
+  color: var(--text-tertiary);
+}
+
+.channel-search-trigger svg {
+  color: var(--text-tertiary);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.channel-search-trigger svg.rotated {
+  transform: rotate(180deg);
+}
+
+.channel-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.channel-search-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+
+.channel-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+}
+
+.channel-search-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.channel-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.channel-search-item:hover {
+  background: var(--bg-panel);
+}
+
+.channel-search-item.selected {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.channel-search-item .channel-name {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.channel-search-item .channel-group {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.channel-search-item .channel-check {
+  color: var(--brand-primary);
+  flex-shrink: 0;
+}
+
+.channel-search-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}

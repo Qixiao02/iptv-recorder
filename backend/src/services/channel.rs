@@ -2,7 +2,7 @@
 
 use crate::{
     models::{Channel, CreateChannelRequest},
-    services::ServiceContext,
+    services::{url_safety::assert_safe_url, ServiceContext},
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,8 @@ impl ChannelService {
     /// 创建频道
     pub async fn create(&self, req: CreateChannelRequest) -> Result<Channel> {
         let req = normalize_channel_request(req);
+        // SSRF 校验:私有服务器频道(内网源)跳过严格校验,其它做完整校验(含 DNS 解析)
+        assert_channel_url_safe(&req).await?;
         let id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -251,6 +253,13 @@ impl ChannelService {
                 continue;
             }
 
+            // 批量导入用轻量 SSRF 校验(同步,不做 DNS 解析,避免批量时阻塞过久)
+            if let Err(e) = assert_channel_url_safe_light(&req) {
+                result.failed += 1;
+                result.errors.push(format!("频道 {} 地址不安全,已跳过: {}", req.name, e));
+                continue;
+            }
+
             if let Some(existing_id) = existing_by_url.get(&req.url) {
                 if overwrite {
                     let updated = sqlx::query(
@@ -276,10 +285,7 @@ impl ChannelService {
                         Err(e) => {
                             result.failed += 1;
                             if is_unique_constraint_error(&e) {
-                                result.errors.push(format!(
-                                    "频道 URL 已存在：{}",
-                                    req.name
-                                ));
+                                result.errors.push(format!("频道 URL 已存在：{}", req.name));
                             } else {
                                 result.errors.push(format!(
                                     "频道 {} 保存失败，请检查频道名称和流地址后重试（{}）",
@@ -320,10 +326,7 @@ impl ChannelService {
                     Err(e) => {
                         result.failed += 1;
                         if is_unique_constraint_error(&e) {
-                            result.errors.push(format!(
-                                "频道 URL 已存在：{}",
-                                req.name
-                            ));
+                            result.errors.push(format!("频道 URL 已存在：{}", req.name));
                         } else {
                             result.errors.push(format!(
                                 "频道 {} 保存失败，请检查频道名称和流地址后重试（{}）",
@@ -476,6 +479,35 @@ impl ChannelService {
             }
         }
     }
+}
+
+/// 频道 URL 安全校验(完整版,含 DNS 解析):用于单条 create。
+/// 私有服务器频道(内网源)跳过严格校验,只校验 scheme;其它做完整 SSRF 校验。
+async fn assert_channel_url_safe(req: &CreateChannelRequest) -> Result<()> {
+    if req.source_visibility == "private_server_only" {
+        crate::services::url_safety::assert_safe_url_scheme_only(&req.url)
+    } else {
+        assert_safe_url(&req.url).await
+    }
+}
+
+/// 频道 URL 安全校验(轻量版,同步):用于批量导入,不做 DNS 解析避免阻塞。
+fn assert_channel_url_safe_light(req: &CreateChannelRequest) -> Result<()> {
+    use crate::services::url_safety::{assert_safe_url_scheme_only, is_disallowed_hostname};
+    use url::Url;
+
+    assert_safe_url_scheme_only(&req.url)?;
+    // 私有服务器频道允许内网主机名
+    if req.source_visibility != "private_server_only" {
+        if let Ok(parsed) = Url::parse(&req.url) {
+            if let Some(host) = parsed.host_str() {
+                if is_disallowed_hostname(host) {
+                    anyhow::bail!("不允许使用本地或内网地址: {}", host);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalize_channel_request(mut req: CreateChannelRequest) -> CreateChannelRequest {

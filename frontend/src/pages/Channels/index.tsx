@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { batchDeleteChannels, getChannels, getChannelGroups, deleteChannel, testChannel } from '@/api/channels';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import {
   Search,
@@ -89,14 +90,23 @@ export const Channels: React.FC = () => {
     mutationFn: deleteChannel,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
+      toast.success(t('common:toast.channelDeleted'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
   const batchDeleteMutation = useMutation({
     mutationFn: batchDeleteChannels,
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const count = result?.deleted ?? selectedChannels.size;
       setSelectedChannels(new Set());
       queryClient.invalidateQueries({ queryKey: ['channels'] });
+      toast.success(t('common:toast.channelsBatchDeleted', { count }));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -125,9 +135,11 @@ export const Channels: React.FC = () => {
     mutationFn: testChannel,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
+      toast.success(t('common:toast.channelTestOk'));
       setTestingId(null);
     },
-    onError: () => {
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
       setTestingId(null);
     },
   });

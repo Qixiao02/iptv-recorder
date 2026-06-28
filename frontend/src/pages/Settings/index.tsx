@@ -15,24 +15,26 @@ import { changePassword } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSettingStore } from '@/stores/settingStore';
 import { useUIStore } from '@/stores/uiStore';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import type { SystemConfig } from '@/types';
 import { buildConfigUpdateRequest } from './configPayload';
+import Markdown from '@/components/Markdown';
+// 以纯文本导入 README(构建前由 predev/prebuild 脚本从项目根同步到 src/about-readme.md)
+import readmeContent from '@/about-readme.md?raw';
 import {
   Settings,
   Database,
   Clapperboard,
   Bell,
   Info,
+  ChevronLeft,
   ChevronRight,
   Save,
   RotateCcw,
-  Globe,
   FolderOpen,
-  Zap,
-  HardDrive,
   Loader2,
   CheckCircle,
   User,
@@ -74,6 +76,8 @@ export const SettingsPage: React.FC = () => {
   const [directoryList, setDirectoryList] = useState<ServerDirectoryList | null>(null);
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState('');
+  // 手动输入路径(用于网络路径 UNC / 挂载点直接粘贴导航)
+  const [manualPath, setManualPath] = useState('');
   const { user } = useAuthStore();
   const alerts = useUIStore((state) => state.alerts);
   const addAlert = useUIStore((state) => state.addAlert);
@@ -115,15 +119,22 @@ export const SettingsPage: React.FC = () => {
     refetchInterval: isAdmin ? 30000 : false,
   });
 
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(20);
+
   const {
-    data: auditLogs,
+    data: auditData,
     isLoading: isAuditLoading,
     refetch: refetchAuditLogs,
   } = useQuery({
-    queryKey: ['audit', 'logs'],
-    queryFn: getAuditLogs,
+    queryKey: ['audit', 'logs', auditPage, auditPageSize],
+    queryFn: () => getAuditLogs({ page: auditPage, page_size: auditPageSize }),
     enabled: isAdmin,
+    placeholderData: (prev) => prev,
   });
+  const auditLogs = auditData?.items ?? [];
+  const auditTotalPages = auditData?.total_pages ?? 1;
+  const auditTotal = auditData?.total ?? 0;
 
   useEffect(() => {
     if (config) {
@@ -145,9 +156,11 @@ export const SettingsPage: React.FC = () => {
       setSaveSuccess(true);
       setSaveError('');
       setTimeout(() => setSaveSuccess(false), 2000);
+      toast.success(t('common:toast.configSaved'));
     },
     onError: (error) => {
       setSaveError(error instanceof Error ? error.message : t('settings:saveFailed'));
+      toast.error(t('common:toast.operationFailed', { message: error instanceof Error ? error.message : '' }));
     },
   });
 
@@ -161,9 +174,11 @@ export const SettingsPage: React.FC = () => {
       setPasswordError('');
       setPasswordForm({ old_password: '', new_password: '', confirm_password: '' });
       setTimeout(() => setPasswordSuccess(false), 3000);
+      toast.success(t('common:toast.passwordChanged'));
     },
     onError: (error) => {
       setPasswordError(error instanceof Error ? error.message : t('settings:account.failed'));
+      toast.error(t('common:toast.operationFailed', { message: error instanceof Error ? error.message : '' }));
     },
   });
 
@@ -178,6 +193,7 @@ export const SettingsPage: React.FC = () => {
         message: t('settings:ops.cleanupSuccess'),
         details: result.message,
       });
+      toast.success(t('common:toast.cleanupDone', { count: result.deleted ?? 0 }));
     },
     onError: (error) => {
       addAlert({
@@ -185,6 +201,7 @@ export const SettingsPage: React.FC = () => {
         message: t('settings:ops.cleanupFailed'),
         details: error instanceof Error ? error.message : t('common:unknownError'),
       });
+      toast.error(t('common:toast.operationFailed', { message: error instanceof Error ? error.message : '' }));
     },
   });
 
@@ -198,6 +215,7 @@ export const SettingsPage: React.FC = () => {
         message: t('settings:ops.schedulerReloaded'),
         details: result.message,
       });
+      toast.success(t('common:toast.schedulerReloaded'));
     },
     onError: (error) => {
       addAlert({
@@ -205,6 +223,7 @@ export const SettingsPage: React.FC = () => {
         message: t('settings:ops.schedulerReloadFailed'),
         details: error instanceof Error ? error.message : t('common:unknownError'),
       });
+      toast.error(t('common:toast.operationFailed', { message: error instanceof Error ? error.message : '' }));
     },
   });
 
@@ -281,6 +300,15 @@ export const SettingsPage: React.FC = () => {
   const closeDirectoryPicker = () => {
     setDirectoryPickerOpen(false);
     setDirectoryError('');
+    setManualPath('');
+  };
+
+  // 手动输入路径后导航进去(用于网络路径 UNC / 挂载点直接粘贴)
+  const navigateToManualPath = () => {
+    const p = manualPath.trim();
+    if (p) {
+      void loadServerDirectory(p);
+    }
   };
 
   const selectCurrentDirectory = () => {
@@ -361,21 +389,26 @@ export const SettingsPage: React.FC = () => {
                 <label>{t('settings:storage.path')}</label>
                 <span className="setting-desc">{t('settings:storage.pathDesc')}</span>
               </div>
-              <div className="input-with-btn">
-                <input
-                  type="text"
-                  className="input"
-                  value={localConfig.storage.recordings_path}
-                  onChange={(e) => updateLocalConfig('storage.recordings_path', e.target.value)}
-                />
-                <button
-                  className="btn btn-ghost"
-                  type="button"
-                  onClick={openDirectoryPicker}
-                  title={t('settings:storage.browseServer', { defaultValue: 'Browse server directories' })}
-                >
-                  <FolderOpen size={16} />
-                </button>
+              <div className="setting-control-group">
+                <div className="input-with-btn">
+                  <input
+                    type="text"
+                    className="input"
+                    value={localConfig.storage.recordings_path}
+                    onChange={(e) => updateLocalConfig('storage.recordings_path', e.target.value)}
+                  />
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    onClick={openDirectoryPicker}
+                    title={t('settings:storage.browseServer', { defaultValue: 'Browse server directories' })}
+                  >
+                    <FolderOpen size={16} />
+                  </button>
+                </div>
+                <span className="setting-hint">
+                  {t('settings:storage.recordingsPathHint', { defaultValue: '支持本地路径或网络路径(如 \\\\nas\\media\\recordings、/mnt/nas/recordings)。Docker 部署需先将网络盘挂载到容器。' })}
+                </span>
               </div>
             </div>
             <div className="setting-item">
@@ -434,18 +467,6 @@ export const SettingsPage: React.FC = () => {
                 />
                 <span className="input-suffix">{t('settings:recording.minutes')}</span>
               </div>
-            </div>
-            <div className="setting-item">
-              <div className="setting-info">
-                <label>{t('settings:recording.executable')}</label>
-                <span className="setting-desc">{t('settings:recording.executableDesc')}</span>
-              </div>
-              <input
-                type="text"
-                className="input setting-control"
-                value={localConfig.recording.n_m3u8dl_re_path}
-                onChange={(e) => updateLocalConfig('recording.n_m3u8dl_re_path', e.target.value)}
-              />
             </div>
             <div className="setting-item">
               <div className="setting-info">
@@ -703,32 +724,72 @@ export const SettingsPage: React.FC = () => {
               {isAuditLoading ? (
                 <div className="ops-empty">{t('settings:ops.auditLoading')}</div>
               ) : auditLogs && auditLogs.length > 0 ? (
-                <div className="audit-table-wrap">
-                  <table className="audit-table">
-                    <thead>
-                      <tr>
-                        <th>{t('settings:ops.columns.time')}</th>
-                        <th>{t('settings:ops.columns.user')}</th>
-                        <th>{t('settings:ops.columns.role')}</th>
-                        <th>{t('settings:ops.columns.action')}</th>
-                        <th>{t('settings:ops.columns.resource')}</th>
-                        <th>{t('settings:ops.columns.details')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditLogs.map((log) => (
-                        <tr key={log.id}>
-                          <td>{formatDateTime(log.created_at)}</td>
-                          <td>{log.username || '-'}</td>
-                          <td>{log.role || '-'}</td>
-                          <td><code>{log.action}</code></td>
-                          <td>{log.resource_type}{log.resource_id ? `:${log.resource_id.slice(0, 8)}` : ''}</td>
-                          <td className="audit-details-cell" title={log.details || ''}>{log.details || '-'}</td>
+                <>
+                  <div className="audit-table-wrap">
+                    <table className="audit-table">
+                      <thead>
+                        <tr>
+                          <th>{t('settings:ops.columns.time')}</th>
+                          <th>{t('settings:ops.columns.user')}</th>
+                          <th>{t('settings:ops.columns.role')}</th>
+                          <th>{t('settings:ops.columns.action')}</th>
+                          <th>{t('settings:ops.columns.resource')}</th>
+                          <th>{t('settings:ops.columns.details')}</th>
                         </tr>
+                      </thead>
+                      <tbody>
+                        {auditLogs.map((log) => (
+                          <tr key={log.id}>
+                            <td>{formatDateTime(log.created_at)}</td>
+                            <td>{log.username || '-'}</td>
+                            <td>{log.role || '-'}</td>
+                            <td><code>{log.action}</code></td>
+                            <td>{log.resource_type}{log.resource_id ? `:${log.resource_id.slice(0, 8)}` : ''}</td>
+                            <td className="audit-details-cell" title={log.details || ''}>{log.details || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="pagination pagination-audit">
+                    <span className="pagination-total">
+                      {t('settings:ops.totalRecords', { total: auditTotal, defaultValue: `共 ${auditTotal} 条` })}
+                    </span>
+                    <div className="pagination-controls">
+                      <button
+                        className="pagination-btn"
+                        disabled={auditPage <= 1}
+                        onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span className="pagination-info">
+                        {auditPage} / {auditTotalPages}
+                      </span>
+                      <button
+                        className="pagination-btn"
+                        disabled={auditPage >= auditTotalPages}
+                        onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                    <select
+                      className="pagination-size"
+                      value={auditPageSize}
+                      onChange={(e) => {
+                        setAuditPageSize(Number(e.target.value));
+                        setAuditPage(1);
+                      }}
+                    >
+                      {[20, 50, 100].map((size) => (
+                        <option key={size} value={size}>
+                          {t('settings:ops.pageSize', { count: size, defaultValue: `${size} 条/页` })}
+                        </option>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </select>
+                  </div>
+                </>
               ) : (
                 <div className="ops-empty">{t('settings:ops.auditEmpty')}</div>
               )}
@@ -760,20 +821,10 @@ export const SettingsPage: React.FC = () => {
                 <p className="description">{t('settings:about.desc')}</p>
               </div>
             </div>
-            <div className="about-links">
-              <span className="about-link disabled"><Globe size={18} /><span>{t('settings:about.website')}</span></span>
-              <span className="about-link disabled"><Zap size={18} /><span>{t('settings:about.checkUpdate')}</span></span>
-              <span className="about-link disabled"><HardDrive size={18} /><span>GitHub</span></span>
-            </div>
-            <div className="tech-stack">
-              <h4>{t('settings:about.techStack')}</h4>
-              <div className="tech-tags">
-                <span className="tech-tag">Rust</span>
-                <span className="tech-tag">Axum</span>
-                <span className="tech-tag">SQLite</span>
-                <span className="tech-tag">React</span>
-                <span className="tech-tag">TypeScript</span>
-              </div>
+
+            {/* README 内容渲染：替代原先占位的官方网站/检查更新/GitHub/技术栈标签 */}
+            <div className="about-readme">
+              <Markdown content={readmeContent} />
             </div>
           </div>
         );
@@ -873,6 +924,38 @@ export const SettingsPage: React.FC = () => {
                 >
                   {t('settings:storage.rootDirectory', { defaultValue: 'Roots' })}
                 </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  onClick={() => loadServerDirectory('/mnt/host')}
+                  disabled={directoryLoading}
+                  title={t('settings:storage.hostRootHint', { defaultValue: '浏览宿主机路径(需在 docker-compose 挂载 /mnt/host)' })}
+                >
+                  {t('settings:storage.hostRoot', { defaultValue: '宿主机' })}
+                </button>
+                <div className="directory-manual">
+                  <input
+                    type="text"
+                    className="input input-sm"
+                    placeholder={t('settings:storage.manualPathPlaceholder', { defaultValue: '粘贴网络路径(如 \\\\server\\share)后回车导航' })}
+                    value={manualPath}
+                    onChange={(e) => setManualPath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        navigateToManualPath();
+                      }
+                    }}
+                  />
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    type="button"
+                    onClick={navigateToManualPath}
+                    disabled={directoryLoading || !manualPath.trim()}
+                  >
+                    {t('settings:storage.go', { defaultValue: '前往' })}
+                  </button>
+                </div>
               </div>
 
               {directoryError && <div className="directory-error">{directoryError}</div>}

@@ -8,20 +8,27 @@ pub mod channel;
 pub mod cleanup;
 pub mod config_service;
 pub mod epg;
+pub mod heartbeat;
 pub mod m3u_parser;
+pub mod notification;
 pub mod post_process;
 pub mod recording;
 pub mod schedule;
 pub mod scheduler;
 pub mod transcode;
+pub mod url_safety;
 
-pub use audit::AuditService;
+pub use audit::{AuditService, PaginatedAuditLogs};
 pub use auth::{AuthService, Claims};
 pub use channel::{ChannelService, ChannelTestResult, PaginationParams};
 pub use cleanup::CleanupService;
 pub use config_service::{ConfigService, ConfigUpdateRequest, SystemConfig};
 pub use epg::{EpgService, ImportEpgRequest};
+pub use heartbeat::HeartbeatService;
 pub use m3u_parser::{M3UParseResult, M3UParser};
+pub use notification::{
+    NotificationPaginationParams, NotificationService, PaginatedNotifications, UnreadCount,
+};
 pub use post_process::PostProcessor;
 pub use recording::RecordingService;
 pub use schedule::ScheduleService;

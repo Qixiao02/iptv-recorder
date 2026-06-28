@@ -11,14 +11,20 @@ export default {
     switchToDark: 'Switch to dark mode',
   },
   alerts: {
-    title: 'System Alerts',
+    title: 'Notifications',
     markAllRead: 'Mark all read',
-    empty: 'No system alerts',
+    empty: 'No notifications',
     levels: {
       info: 'Info',
       warning: 'Warning',
       error: 'Error',
       critical: 'Critical',
+    },
+    categories: {
+      recording_complete: 'Recording Complete',
+      recording_failed: 'Recording Failed',
+      disk_warning: 'Disk Warning',
+      system: 'System',
     },
   },
   language: {

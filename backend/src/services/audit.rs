@@ -1,12 +1,13 @@
 //! 审计日志服务
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::models::{AuditLog, SystemHealth};
 
-use super::{Claims, ServiceContext};
+use super::{Claims, PaginationParams, ServiceContext};
 
 pub struct AuditService {
     ctx: ServiceContext,
@@ -15,6 +16,16 @@ pub struct AuditService {
 #[derive(Debug, FromRow)]
 struct CountRow {
     total: i64,
+}
+
+/// 分页审计日志响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedAuditLogs {
+    pub items: Vec<AuditLog>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
 }
 
 impl AuditService {
@@ -53,15 +64,38 @@ impl AuditService {
         Ok(())
     }
 
-    pub async fn list_recent(&self, limit: i64) -> Result<Vec<AuditLog>> {
-        let logs = sqlx::query_as::<_, AuditLog>(
-            "SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?",
+    /// 分页查询审计日志（最新在前），与频道分页约定一致：
+    /// page 默认 1，page_size 默认 20，clamp 到 [1, 100]。
+    pub async fn list_paginated(&self, params: PaginationParams) -> Result<PaginatedAuditLogs> {
+        let page = params.page.unwrap_or(1).max(1);
+        let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
+        let offset = (page - 1) * page_size;
+
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs")
+            .fetch_one(&self.ctx.db)
+            .await?;
+
+        let items = sqlx::query_as::<_, AuditLog>(
+            "SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
-        .bind(limit.max(1))
+        .bind(page_size)
+        .bind(offset)
         .fetch_all(&self.ctx.db)
         .await?;
 
-        Ok(logs)
+        let total_pages = if page_size == 0 {
+            0
+        } else {
+            (total + page_size - 1) / page_size
+        };
+
+        Ok(PaginatedAuditLogs {
+            items,
+            total,
+            page,
+            page_size,
+            total_pages,
+        })
     }
 
     pub async fn system_health(&self) -> Result<SystemHealth> {

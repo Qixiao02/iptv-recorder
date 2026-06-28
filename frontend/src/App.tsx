@@ -8,7 +8,8 @@ import { wsClient } from '@/api/websocket';
 import { initTheme } from '@/stores/themeStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
-import type { Channel, Task, TaskProgressData, TaskUpdateData, ChannelStatusData, SystemAlertData } from '@/types';
+import { useNotificationStore } from '@/stores/notificationStore';
+import type { Channel, Task, TaskProgressData, TaskUpdateData, ChannelStatusData, SystemAlertData, AppNotification } from '@/types';
 import { applyTaskProgressUpdate, applyTaskStatusUpdate, patchTaskCache } from '@/lib/taskRealtime';
 import '@/locales/index';
 
@@ -65,6 +66,8 @@ const router = createBrowserRouter([
 function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const addAlert = useUIStore((state) => state.addAlert);
+  const onNotificationReceived = useNotificationStore((state) => state.onNotificationReceived);
+  const fetchUnreadCount = useNotificationStore((state) => state.fetchUnreadCount);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -79,6 +82,12 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated) {
       return undefined;
+    }
+
+    // 登录后拉取一次真实未读数；尝试请求浏览器通知权限
+    fetchUnreadCount();
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => undefined);
     }
 
     const updateTaskCache = (updater: (tasks: Task[]) => Task[]) => {
@@ -133,6 +142,16 @@ function App() {
       addAlert(alert);
     });
 
+    const unsubscribeNotification = wsClient.onNotification((n: AppNotification) => {
+      // 实时通知：自增未读数；刷新通知列表缓存（让铃铛下拉自动更新，无需手动刷新页面）；
+      // 浏览器原生通知（可选）
+      onNotificationReceived(n);
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      if (Notification.permission === 'granted') {
+        new Notification(n.title, { body: n.message });
+      }
+    });
+
     const unsubscribeConnection = wsClient.onConnectionStateChange((state) => {
       if (state === 'connected') {
         queryClient.invalidateQueries({ queryKey: ['tasks'] });
@@ -144,9 +163,10 @@ function App() {
       unsubscribeUpdate();
       unsubscribeChannelStatus();
       unsubscribeAlert();
+      unsubscribeNotification();
       unsubscribeConnection();
     };
-  }, [isAuthenticated, addAlert]);
+  }, [isAuthenticated, addAlert, onNotificationReceived, fetchUnreadCount]);
 
   return (
     <ErrorBoundary>

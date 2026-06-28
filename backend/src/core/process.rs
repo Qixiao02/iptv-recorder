@@ -137,8 +137,11 @@ impl ProcessManager {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // 确保临时目录存在
-        tokio::fs::create_dir_all(&self.temp_dir).await?;
+        // 每个录制任务使用独立的临时子目录（按 task_id 隔离），
+        // 避免并发录制时 HLS 分片（1.ts/2.ts...）在共享 tmp-dir 中互相覆盖，
+        // 这正是“文件名是 A 台、内容却是 B 台”串台问题的根因。
+        let task_tmp_dir = self.temp_dir.join(&config.task_id);
+        tokio::fs::create_dir_all(&task_tmp_dir).await?;
 
         // 构建命令参数 (N_m3u8DL-RE 2025 版本)
         let recorder_path = config
@@ -148,7 +151,32 @@ impl ProcessManager {
         let mut cmd = Command::new(recorder_path);
 
         if config.engine == RecordingEngine::Ffmpeg {
-            cmd.arg("-y");
+            cmd.arg("-y")
+                // 与转码(播放)路径保持一致的输入稳定性参数,
+                // 避免对不稳定的 mpegts/udp 流在长时间录制中断流。
+                .args([
+                    "-hide_banner",
+                    "-fflags",
+                    "+genpts+discardcorrupt+igndts",
+                    "-err_detect",
+                    "ignore_err",
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "2",
+                    // 多 Program 的 mpegts 流(如 udpxy 转发的 IPTV 组播)PMT 表
+                    // 经常动态变化、多个 program 顺序漂移。不显式指定时 ffmpeg
+                    // 可能锁到错误的 program/频道(表现为"录错台")。
+                    // 下面用 -map 显式只取第一个视频流和对应的音频,避免选台漂移。
+                    "-thread_queue_size",
+                    "512",
+                    "-analyzeduration",
+                    "4M",
+                    "-probesize",
+                    "4M",
+                ]);
             if let Some(ua) = &config.user_agent {
                 cmd.arg("-user_agent").arg(ua);
             }
@@ -159,7 +187,10 @@ impl ProcessManager {
                 cmd.arg("-t").arg(duration.to_string());
             }
             cmd.arg("-i").arg(&config.url);
+            // 显式映射:第一个视频流 + 它的音频,杜绝多 program 选台漂移
+            cmd.args(["-map", "0:v:0", "-map", "0:a?"]);
             cmd.arg("-c").arg("copy");
+            cmd.arg("-sn").arg("-dn");
             cmd.arg("-f").arg("mpegts");
             cmd.arg(&config.output_path);
 
@@ -168,8 +199,8 @@ impl ProcessManager {
             info!("  output: {}", config.output_path.display());
             info!("  duration: {:?}s", config.duration_seconds);
         } else {
-            // 基本参数
-            cmd.arg(&config.url).arg("--tmp-dir").arg(&self.temp_dir);
+            // 基本参数：使用按 task_id 隔离的临时目录，防止并发录制分片互相覆盖
+            cmd.arg(&config.url).arg("--tmp-dir").arg(&task_tmp_dir);
 
             // 视频质量选择
             match config.video_quality.as_str() {
@@ -278,6 +309,7 @@ impl ProcessManager {
         let process_id = id;
         let task_id_clone = task_id.clone();
         let output_path = config.output_path.clone();
+        let tmp_dir_to_cleanup = task_tmp_dir.clone();
 
         // 注册进程
         {
@@ -320,6 +352,19 @@ impl ProcessManager {
             {
                 let mut processes = processes.write().await;
                 processes.remove(&process_id);
+            }
+
+            // 清理该任务专属的临时子目录（N_m3u8DL-RE 的 --del-after-done 只删文件不删目录）。
+            // 失败/取消时也清理，避免残留分片占用磁盘。
+            if tmp_dir_to_cleanup.exists() {
+                if let Err(e) = tokio::fs::remove_dir_all(&tmp_dir_to_cleanup).await {
+                    debug!(
+                        "清理任务临时目录失败（可忽略）: task_id={}, dir={}, error={}",
+                        task_id_clone,
+                        tmp_dir_to_cleanup.display(),
+                        e
+                    );
+                }
             }
 
             // 处理结果

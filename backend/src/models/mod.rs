@@ -24,6 +24,22 @@ pub struct AuditLog {
     pub created_at: String,
 }
 
+/// 应用内通知（持久化到 notifications 表）
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Notification {
+    pub id: String,
+    pub category: String,
+    pub level: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub task_id: Option<String>,
+    #[sqlx(rename = "read")]
+    #[serde(rename = "read")]
+    pub is_read: bool,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemHealth {
     pub users_total: i64,
@@ -319,6 +335,10 @@ pub enum WsMessage {
     /// 系统告警
     #[serde(rename = "system.alert")]
     SystemAlert(SystemAlertData),
+
+    /// 应用内通知（持久化）
+    #[serde(rename = "notification")]
+    Notification(NotificationData),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,4 +368,17 @@ pub struct SystemAlertData {
     pub level: String,
     pub message: String,
     pub details: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationData {
+    pub id: String,
+    pub category: String,
+    pub level: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub task_id: Option<String>,
+    pub read: bool,
+    pub created_at: String,
 }

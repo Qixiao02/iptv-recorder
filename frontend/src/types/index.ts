@@ -162,6 +162,7 @@ export type WsMessageType =
   | 'task.progress'
   | 'channel.status'
   | 'system.alert'
+  | 'notification'
   | 'ping'
   | 'pong';
 
@@ -210,6 +211,21 @@ export interface AuditLog {
   resource_type: string;
   resource_id: string | null;
   details: string | null;
+  created_at: string;
+}
+
+/// 应用内通知（持久化通知中心）
+export interface AppNotification {
+  id: string;
+  /** 'recording_complete' | 'recording_failed' | 'disk_warning' | 'system' */
+  category: string;
+  /** 'info' | 'warning' | 'error' */
+  level: string;
+  title: string;
+  message: string;
+  details: string | null;
+  task_id: string | null;
+  read: boolean;
   created_at: string;
 }
 

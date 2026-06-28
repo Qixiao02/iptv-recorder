@@ -1,4 +1,5 @@
 import apiClient from './client';
+import type { PaginatedResponse } from './channels';
 import type { UpcomingTask, SystemConfig, AuditLog, SystemHealth } from '@/types';
 
 export interface ConfigUpdateRequest {
@@ -61,8 +62,17 @@ export const getSystemHealth = (): Promise<SystemHealth> => {
   return apiClient.get('/system/health').then((res) => res.data);
 };
 
-export const getAuditLogs = (): Promise<AuditLog[]> => {
-  return apiClient.get('/audit/logs').then((res) => res.data);
+export interface AuditLogParams {
+  page?: number;
+  page_size?: number;
+}
+
+export const getAuditLogs = (
+  params: AuditLogParams = {}
+): Promise<PaginatedResponse<AuditLog>> => {
+  return apiClient
+    .get<PaginatedResponse<AuditLog>>('/audit/logs', { params })
+    .then((res) => res.data);
 };
 
 export const runCleanup = (): Promise<{ deleted: number; message: string }> => {

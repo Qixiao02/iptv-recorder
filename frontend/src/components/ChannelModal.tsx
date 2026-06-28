@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createChannel, updateChannel } from '@/api/channels';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { X, Loader2 } from 'lucide-react';
 import type { Channel, CreateChannelRequest } from '@/types';
@@ -50,7 +51,11 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
     mutationFn: createChannel,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
+      toast.success(t('common:toast.channelCreated'));
       handleClose();
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -58,7 +63,11 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
     mutationFn: ({ id, data }: { id: string; data: CreateChannelRequest }) => updateChannel(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channels'] });
+      toast.success(t('common:toast.channelUpdated'));
       handleClose();
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 

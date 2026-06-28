@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { toast } from '@/stores/toastStore';
 import {
   X,
   Copy,
@@ -15,6 +16,7 @@ import {
 import { formatBytes } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import type { Task } from '@/types';
+import './Modal.css';
 import './TaskDetailModal.css';
 
 interface TaskDetailModalProps {
@@ -75,7 +77,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast.success(t('common:toast.copiedToClipboard')))
+      .catch(() => toast.error(t('common:toast.operationFailed', { message: '' })));
   };
 
   return (
@@ -123,7 +128,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                     const msg = t('components:taskDetail.openFolderMessage', {
                       path: task.output_path,
                     });
-                    alert(msg);
+                    toast.info(msg);
                   }}
                 >
                   <FolderOpen size={15} />

@@ -56,6 +56,8 @@ impl EpgService {
         let content = if let Some(content) = req.content {
             content
         } else if let Some(url) = &req.url {
+            // SSRF 校验:EPG URL 由用户提供且会被服务端抓取,必须拦截内网地址
+            crate::services::url_safety::assert_safe_url(url).await?;
             reqwest::get(url)
                 .await
                 .context("下载 EPG 源失败")?

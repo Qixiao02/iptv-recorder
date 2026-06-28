@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync-readme": "node -e \"const fs=require('fs'),p=require('path');try{fs.copyFileSync(p.resolve(__dirname,'../README.md'),p.resolve(__dirname,'src/about-readme.md'))}catch(e){/* 项目根 README 不存在(如容器内未挂载根目录)则保留现有副本 */}\"",
+    "predev": "pnpm sync-readme",
+    "prebuild": "pnpm sync-readme"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",

@@ -90,6 +90,14 @@ async fn main() -> Result<()> {
     .start();
     info!("🧹 Cleanup Service initialized");
 
+    // 启动后台巡检服务（磁盘空间定时巡检，独立窗口，与录制主流程解耦）
+    Arc::new(services::HeartbeatService::new(
+        service_ctx.clone(),
+        Some(event_bus.sender()),
+    ))
+    .start();
+    info!("💓 Heartbeat Inspection Service initialized");
+
     // 启动 Cron 调度器
     let scheduler = Arc::new(
         services::SchedulerManager::new(db.clone(), config.clone(), process_manager.clone())

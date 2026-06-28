@@ -38,4 +38,30 @@ export default {
     cancelled: 'Cancelled',
   },
   channelFallback: 'Channel {{id}}...',
+  toast: {
+    // Channels
+    channelCreated: 'Channel created',
+    channelUpdated: 'Channel updated',
+    channelDeleted: 'Channel deleted',
+    channelsBatchDeleted: 'Deleted {{count}} channels',
+    channelTestOk: 'Channel is reachable',
+    // Schedules
+    scheduleCreated: 'Recording schedule created',
+    scheduleUpdated: 'Schedule updated',
+    scheduleDeleted: 'Schedule deleted',
+    scheduleToggled: 'Schedule toggled',
+    // Tasks
+    taskCancelled: 'Task cancelled',
+    tasksCleared: 'Completed tasks cleared',
+    taskDeleted: 'Task record deleted',
+    manualRecordStarted: 'Recording started',
+    // Settings
+    configSaved: 'Settings saved',
+    passwordChanged: 'Password changed',
+    cleanupDone: 'Cleaned {{count}} expired records',
+    schedulerReloaded: 'Scheduler reloaded',
+    // Generic
+    operationFailed: 'Operation failed: {{message}}',
+    copiedToClipboard: 'Copied to clipboard',
+  },
 };

@@ -4,8 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSchedules, deleteSchedule, toggleSchedule } from '@/api/schedules';
 import { startManualRecord } from '@/api/tasks';
 import { upsertTaskCache } from '@/lib/taskRealtime';
-import { ToastContainer } from '@/components/ConfirmDialog';
-import { useToast } from '@/components/useToast';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import {
   Plus,
@@ -68,7 +67,6 @@ export const Schedules: React.FC = () => {
   const { t } = useTranslation(['schedules', 'common']);
   const isI18nReady = useI18nNamespace(['schedules', 'common']);
   const queryClient = useQueryClient();
-  const { toasts, showToast, removeToast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
@@ -83,6 +81,10 @@ export const Schedules: React.FC = () => {
     mutationFn: (id: string) => toggleSchedule(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      toast.success(t('common:toast.scheduleToggled'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -90,6 +92,10 @@ export const Schedules: React.FC = () => {
     mutationFn: deleteSchedule,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      toast.success(t('common:toast.scheduleDeleted'));
+    },
+    onError: (error) => {
+      toast.error(t('common:toast.operationFailed', { message: (error as Error).message }));
     },
   });
 
@@ -98,11 +104,11 @@ export const Schedules: React.FC = () => {
     onSuccess: (task) => {
       upsertTaskCache(queryClient, task);
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      showToast(t('schedules:created'), 'success');
+      toast.success(t('schedules:created'));
       setExecutingId(null);
     },
     onError: (error) => {
-      showToast(t('schedules:executeFailed', { message: (error as Error).message }), 'error');
+      toast.error(t('schedules:executeFailed', { message: (error as Error).message }));
       setExecutingId(null);
     },
   });
@@ -152,7 +158,6 @@ export const Schedules: React.FC = () => {
 
   return (
     <div className="schedules-page">
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
       <div className="page-header">
         <div className="page-title">
           <h1>{t('schedules:title')}</h1>
@@ -204,6 +209,20 @@ export const Schedules: React.FC = () => {
                 </div>
 
                 <div className="schedule-actions">
+                  {/* 立即执行：常驻卡片外层，无需展开即可触发 */}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => handleExecute(schedule)}
+                    disabled={executingId === schedule.id}
+                    title={t('schedules:actions.execute')}
+                  >
+                    {executingId === schedule.id ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Play size={16} />
+                    )}
+                  </button>
+
                   <button
                     className={`toggle-switch ${schedule.enabled ? 'active' : ''}`}
                     onClick={() => toggleMutation.mutate(schedule.id)}
@@ -247,18 +266,6 @@ export const Schedules: React.FC = () => {
                   </div>
 
                   <div className="detail-actions">
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => handleExecute(schedule)}
-                      disabled={executingId === schedule.id}
-                    >
-                      {executingId === schedule.id ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Play size={14} />
-                      )}
-                      {t('schedules:actions.execute')}
-                    </button>
                     <button
                       className="btn btn-ghost btn-sm"
                       onClick={() => handleEdit(schedule)}

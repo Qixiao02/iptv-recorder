@@ -33,6 +33,9 @@ frontend/.codex-run/
 # Custom config (keep default.toml, ignore overrides)
 backend/config/config.toml
 
+# 密钥与密码(首次部署用 scripts/generate-env 生成,绝不提交)
+.env
+
 # Logs
 Logs/
 *.log

@@ -5,6 +5,7 @@ import { X, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import { startTranscode, stopTranscode } from '@/api/transcode';
 import apiClient from '@/api/client';
 import { getStoredAuthToken } from '@/stores/authStore';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import type { Channel } from '@/types';
 import './PlayerModal.css';
@@ -529,7 +530,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
     const urlToCopy = hlsUrlRef.current
       || (source_visibility === 'private_server_only' ? serverStreamUrl : channelUrl);
     navigator.clipboard.writeText(urlToCopy).then(() => {
-      alert(t('components:player.copied'));
+      toast.success(t('components:player.copied'));
     });
   };
 

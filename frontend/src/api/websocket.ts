@@ -4,6 +4,7 @@ import type {
   TaskProgressData,
   ChannelStatusData,
   SystemAlertData,
+  AppNotification,
 } from '@/types';
 import { getStoredAuthToken } from '@/stores/authStore';
 
@@ -167,6 +168,10 @@ export class WebSocketClient {
 
   onSystemAlert(handler: WsEventHandler<SystemAlertData>): () => void {
     return this.on('system.alert', handler);
+  }
+
+  onNotification(handler: WsEventHandler<AppNotification>): () => void {
+    return this.on('notification', handler);
   }
 
   onConnectionStateChange(handler: WsEventHandler<ConnectionState>): () => void {

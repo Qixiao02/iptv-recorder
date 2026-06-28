@@ -1,0 +1,33 @@
+# Frontend-only dev compose.
+# Run:  docker compose -f docker-compose.dev.yml up
+# Source code is bind-mounted (edit files on host → instant HMR in container).
+# node_modules is an anonymous volume so the container's Linux deps are never
+# clobbered by the host's Windows node_modules.
+
+services:
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: iptv-recorder-frontend-dev
+    ports:
+      - "5173:5173"
+    environment:
+      # Backend listens on the host (port 3033 per root docker-compose.yml).
+      # From inside the container, reach the host via host.docker.internal.
+      VITE_BACKEND_URL: http://host.docker.internal:3033
+      # Force polling-based file watching – required on Windows / bind mounts
+      # where native fs events don't reliably cross the mount boundary.
+      VITE_WATCH_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    volumes:
+      # 1) source mounted read-write for live editing
+      - .:/app
+      # 2) anonymous volume shields container's node_modules from host's
+      - /app/node_modules
+    extra_hosts:
+      # Ensures host.docker.internal resolves on Linux hosts too.
+      # Docker Desktop (Win/Mac) provides this automatically.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { createSchedule, updateSchedule } from '@/api/schedules';
 import { getAllChannels } from '@/api/channels';
+import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
-import { X, Loader2, Settings, HelpCircle } from 'lucide-react';
+import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
 import type { Schedule, CreateScheduleRequest } from '@/types';
 import './Modal.css';
 
@@ -30,7 +31,6 @@ const defaultForm: ScheduleFormData = {
   cron_expression: '0 19 * * *',
   duration_seconds: 3600,
   output_template: '{channel_name}_{datetime}',
-  output_dir: '',
   priority: 5,
   video_quality: 'best',
   audio_quality: 'best',
@@ -77,10 +77,43 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
 
   const [form, setForm] = useState<ScheduleFormData>(defaultForm);
 
+  // 可搜索频道选择器状态
+  const [channelSearchOpen, setChannelSearchOpen] = useState(false);
+  const [channelKeyword, setChannelKeyword] = useState('');
+  const channelSearchRef = useRef<HTMLDivElement>(null);
+
   const { data: channels } = useQuery({
     queryKey: ['channels', 'all'],
     queryFn: getAllChannels,
   });
+
+  // 按关键词模糊过滤频道（名称 + 分组）
+  const filteredChannels = useMemo(() => {
+    const all = channels ?? [];
+    const kw = channelKeyword.trim().toLowerCase();
+    if (!kw) return all;
+    return all.filter((ch) =>
+      ch.name.toLowerCase().includes(kw) || (ch.group_name || '').toLowerCase().includes(kw)
+    );
+  }, [channels, channelKeyword]);
+
+  // 选中的频道名（用于显示）
+  const selectedChannelName = useMemo(() => {
+    const ch = channels?.find((c) => c.id === form.channel_id);
+    return ch ? `${ch.name}${ch.group_name ? ` (${ch.group_name})` : ''}` : '';
+  }, [channels, form.channel_id]);
+
+  // 点击外部关闭搜索下拉
+  useEffect(() => {
+    if (!channelSearchOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (channelSearchRef.current && !channelSearchRef.current.contains(e.target as Node)) {
+        setChannelSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [channelSearchOpen]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -91,7 +124,6 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
           cron_expression: schedule.cron_expression,
           duration_seconds: schedule.duration_seconds,
           output_template: schedule.output_template,
-          output_dir: schedule.output_dir || '',
           priority: schedule.priority,
           video_quality: schedule.video_quality || 'best',
           audio_quality: schedule.audio_quality || 'best',
@@ -114,11 +146,11 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      toast.success(t('common:toast.scheduleCreated'));
       handleClose();
     },
     onError: (error) => {
-      console.error('创建计划失败:', error);
-      alert(t('components:scheduleModal.createFailed', { message: (error as Error).message }));
+      toast.error(t('components:scheduleModal.createFailed', { message: (error as Error).message }));
     },
   });
 
@@ -128,11 +160,11 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      toast.success(t('common:toast.scheduleUpdated'));
       handleClose();
     },
     onError: (error) => {
-      console.error('更新计划失败:', error);
-      alert(t('components:scheduleModal.updateFailed', { message: (error as Error).message }));
+      toast.error(t('components:scheduleModal.updateFailed', { message: (error as Error).message }));
     },
   });
 
@@ -141,10 +173,14 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const handleSubmit = () => {
     if (!form.name.trim() || !form.channel_id) return;
 
+    // 自定义输出目录已统一收归到系统设置，提交时清空，由后端使用全局录制保存路径
+    const { output_dir: _omitted, ...payload } = form;
+    void _omitted;
+
     if (isEdit && schedule) {
-      updateMutation.mutate({ id: schedule.id, data: form });
+      updateMutation.mutate({ id: schedule.id, data: payload });
     } else {
-      createMutation.mutate(form);
+      createMutation.mutate(payload);
     }
   };
 
@@ -178,18 +214,62 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
 
           <div className="form-group">
             <label>{t('components:scheduleModal.channel')}</label>
-            <select
-              className="input channel-select"
-              value={form.channel_id}
-              onChange={(e) => setForm({ ...form, channel_id: e.target.value })}
-            >
-              <option value="">{t('components:scheduleModal.channelPlaceholder')}</option>
-              {channels?.map((ch) => (
-                <option key={ch.id} value={ch.id}>
-                  {ch.name} ({ch.group_name})
-                </option>
-              ))}
-            </select>
+            <div className="channel-search-select" ref={channelSearchRef}>
+              {/* 触发器：显示已选频道名，点击展开搜索 */}
+              <button
+                type="button"
+                className="input channel-search-trigger"
+                onClick={() => {
+                  setChannelSearchOpen((v) => !v);
+                  setChannelKeyword('');
+                }}
+              >
+                <span className={selectedChannelName ? '' : 'placeholder'}>
+                  {selectedChannelName || t('components:scheduleModal.channelPlaceholder')}
+                </span>
+                <ChevronDown size={16} className={channelSearchOpen ? 'rotated' : ''} />
+              </button>
+
+              {channelSearchOpen && (
+                <div className="channel-search-dropdown">
+                  <div className="channel-search-input-wrap">
+                    <Search size={14} />
+                    <input
+                      type="text"
+                      className="channel-search-input"
+                      placeholder={t('components:scheduleModal.channelSearchPlaceholder', { defaultValue: '输入频道名搜索…' })}
+                      value={channelKeyword}
+                      onChange={(e) => setChannelKeyword(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="channel-search-list">
+                    {filteredChannels.length > 0 ? (
+                      filteredChannels.map((ch) => (
+                        <button
+                          type="button"
+                          key={ch.id}
+                          className={`channel-search-item ${ch.id === form.channel_id ? 'selected' : ''}`}
+                          onClick={() => {
+                            setForm({ ...form, channel_id: ch.id });
+                            setChannelSearchOpen(false);
+                            setChannelKeyword('');
+                          }}
+                        >
+                          <span className="channel-name">{ch.name}</span>
+                          {ch.group_name && <span className="channel-group">{ch.group_name}</span>}
+                          {ch.id === form.channel_id && <Check size={14} className="channel-check" />}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="channel-search-empty">
+                        {t('components:scheduleModal.channelSearchEmpty', { defaultValue: '未找到匹配的频道' })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="form-group">
@@ -309,19 +389,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
             </span>
           </div>
 
-          <div className="form-group">
-            <label>{t('components:scheduleModal.outputDir')}</label>
-            <input
-              type="text"
-              className="input"
-              placeholder={t('components:scheduleModal.outputDirPlaceholder')}
-              value={form.output_dir || ''}
-              onChange={(e) => setForm({ ...form, output_dir: e.target.value })}
-            />
-            <span className="form-hint">
-              {t('components:scheduleModal.outputDirHint')}
-            </span>
-          </div>
+          {/* 自定义输出目录已移除：统一使用系统设置中的「录制保存路径」，避免每个计划重复配置 */}
 
           {/* 高级设置 */}
           <div className="advanced-section">
