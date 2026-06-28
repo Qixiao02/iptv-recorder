@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { batchDeleteChannels, getChannels, getChannelGroups, deleteChannel, testChannel } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
+import { usePlayerStore } from '@/stores/playerStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import {
   Search,
@@ -29,7 +30,6 @@ import './Channels.css';
 
 const ImportM3UModal = lazy(() => import('@/components/ImportM3UModal'));
 const ChannelModal = lazy(() => import('@/components/ChannelModal'));
-const PlayerModal = lazy(() => import('@/components/PlayerModal'));
 const EpgImportModal = lazy(() => import('@/components/EpgImportModal'));
 const EpgProgramsModal = lazy(() => import('@/components/EpgProgramsModal'));
 const ConfirmDialog = lazy(() => import('@/components/ConfirmDialog'));
@@ -51,7 +51,7 @@ export const Channels: React.FC = () => {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [batchTesting, setBatchTesting] = useState(false);
   const [testProgress, setTestProgress] = useState({ current: 0, total: 0 });
-  const [playerChannel, setPlayerChannel] = useState<Channel | null>(null);
+  const openPlayer = usePlayerStore((s) => s.openPlayer);
   const [showEpgImportModal, setShowEpgImportModal] = useState(false);
   const [epgChannel, setEpgChannel] = useState<Channel | null>(null);
   const [deletingChannel, setDeletingChannel] = useState<Channel | null>(null);
@@ -172,7 +172,7 @@ export const Channels: React.FC = () => {
   };
 
   const handlePlay = (channel: Channel) => {
-    setPlayerChannel(channel);
+    openPlayer(channel);
   };
 
   const handleSelectAll = () => {
@@ -317,7 +317,6 @@ export const Channels: React.FC = () => {
 
   const shouldRenderImportModal = showImportModal;
   const shouldRenderChannelModal = showChannelModal || editingChannel !== null;
-  const shouldRenderPlayerModal = playerChannel !== null;
   const shouldRenderEpgImportModal = showEpgImportModal;
   const shouldRenderEpgProgramsModal = epgChannel !== null;
 
@@ -693,14 +692,6 @@ export const Channels: React.FC = () => {
             onClose={() => setEpgChannel(null)}
             channelRef={epgChannel.name}
             channelName={epgChannel.name}
-          />
-        )}
-
-        {shouldRenderPlayerModal && playerChannel && (
-          <PlayerModal
-            isOpen
-            onClose={() => setPlayerChannel(null)}
-            channel={playerChannel}
           />
         )}
 

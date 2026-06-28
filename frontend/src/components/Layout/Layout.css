@@ -38,9 +38,11 @@
   flex-shrink: 0;
 }
 
-.logo-icon svg {
+.logo-icon img {
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
 }
 
 .logo-text {
