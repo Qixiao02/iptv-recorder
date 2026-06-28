@@ -87,3 +87,59 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
         }
     }
 }
+
+/// 判断 IP 是否属于"必须始终拦截"的危险地址(云元数据/环回/link-local)。
+///
+/// 与 `is_private_ip` 的区别:私有网段(10.x/192.168.x)在内网 IPTV 场景是合法源,
+/// 不应拦截;但云元数据(169.254.169.254)、环回(127.x)、link-local 必须拦截。
+pub fn is_metadata_or_loopback_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // AWS/GCP/Azure 元数据 169.254.169.254 已被 is_link_local 覆盖
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || v6.is_unicast_link_local()
+        }
+    }
+}
+
+/// 校验导入场景的 URL 安全性:
+/// - 拒绝非 http(s) scheme
+/// - 拒绝 localhost / 内网域名(.local/.internal/.lan 等)
+/// - DNS 解析后,拒绝云元数据/环回/link-local 地址
+/// - **允许**私有网段(10.x/192.168.x)——内网 IPTV 源是合法场景
+pub async fn assert_import_url_safe(url: &str) -> Result<()> {
+    let parsed = url::Url::parse(url).map_err(|e| anyhow::anyhow!("无效的 URL: {}", e))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            anyhow::bail!("仅允许 HTTP/HTTPS 地址,不支持 {}", other);
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL 缺少主机名"))?;
+
+    if is_disallowed_hostname(host) {
+        anyhow::bail!("不允许使用本地或内网域名地址: {}", host);
+    }
+
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| anyhow::anyhow!("解析地址失败: {}", e))?;
+
+    for address in addresses {
+        if is_metadata_or_loopback_ip(address.ip()) {
+            anyhow::bail!("不允许使用云元数据或本机地址: {}", address.ip());
+        }
+    }
+
+    Ok(())
+}

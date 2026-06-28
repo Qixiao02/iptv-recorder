@@ -2,7 +2,10 @@
 
 use crate::{
     models::{Channel, CreateChannelRequest},
-    services::{url_safety::assert_safe_url, ServiceContext},
+    services::{
+        url_safety::{assert_import_url_safe, assert_safe_url_scheme_only, is_disallowed_hostname},
+        ServiceContext,
+    },
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -482,27 +485,27 @@ impl ChannelService {
 }
 
 /// 频道 URL 安全校验(完整版,含 DNS 解析):用于单条 create。
-/// 私有服务器频道(内网源)跳过严格校验,只校验 scheme;其它做完整 SSRF 校验。
+/// 拦截云元数据/环回/link-local,但允许私有网段(内网 IPTV 源是合法场景)。
 async fn assert_channel_url_safe(req: &CreateChannelRequest) -> Result<()> {
-    if req.source_visibility == "private_server_only" {
-        crate::services::url_safety::assert_safe_url_scheme_only(&req.url)
-    } else {
-        assert_safe_url(&req.url).await
-    }
+    assert_import_url_safe(&req.url).await
 }
 
 /// 频道 URL 安全校验(轻量版,同步):用于批量导入,不做 DNS 解析避免阻塞。
+/// 拦截危险 scheme + localhost 域名 + 已知的危险 IP(元数据/环回/link-local)。
 fn assert_channel_url_safe_light(req: &CreateChannelRequest) -> Result<()> {
-    use crate::services::url_safety::{assert_safe_url_scheme_only, is_disallowed_hostname};
+    use crate::services::url_safety::is_metadata_or_loopback_ip;
     use url::Url;
 
     assert_safe_url_scheme_only(&req.url)?;
-    // 私有服务器频道允许内网主机名
-    if req.source_visibility != "private_server_only" {
-        if let Ok(parsed) = Url::parse(&req.url) {
-            if let Some(host) = parsed.host_str() {
-                if is_disallowed_hostname(host) {
-                    anyhow::bail!("不允许使用本地或内网地址: {}", host);
+    if let Ok(parsed) = Url::parse(&req.url) {
+        if let Some(host) = parsed.host_str() {
+            if is_disallowed_hostname(host) {
+                anyhow::bail!("不允许使用本地或内网域名地址: {}", host);
+            }
+            // 主机是 IP 时,拦截云元数据/环回/link-local(私有网段放行)
+            if let Ok(ip) = host.trim_matches(&['[', ']'][..]).parse::<std::net::IpAddr>() {
+                if is_metadata_or_loopback_ip(ip) {
+                    anyhow::bail!("不允许使用云元数据或本机地址: {}", ip);
                 }
             }
         }
