@@ -1528,6 +1528,7 @@ pub async fn stop_transcode(
 /// 获取 HLS 文件 - 直接从文件系统读取，不需要会话跟踪
 pub async fn get_hls_file(
     State((_db, _scheduler, _process_manager, config)): State<AppState>,
+    Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Path((session_id, filename)): Path<(String, String)>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
     tracing::info!(
@@ -1535,6 +1536,10 @@ pub async fn get_hls_file(
         session_id,
         filename
     );
+
+    // 客户端正在拉取分片/播放列表 → 刷新空闲计时器，
+    // 防止 cleanup 在用户还在观看时把会话回收掉（曾经的 5 分钟 manifestLoadError）。
+    transcode_service.touch_session(&session_id).await;
 
     // 安全检查：防止路径遍历攻击
     if session_id.contains('.') || session_id.contains('/') || session_id.contains('\\') {
