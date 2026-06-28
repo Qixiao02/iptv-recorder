@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { importM3UFromUrl, importM3UFromContent } from '@/api/channels';
 import { friendlyError } from '@/api/channels';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
-import { X, Upload, Link, FileText, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Upload, Link, FileText, Loader2, CheckCircle, AlertCircle, FileUp } from 'lucide-react';
+import { toast } from '@/stores/toastStore';
 import type { ImportM3UResponse } from '@/types';
 import './Modal.css';
 
@@ -14,7 +15,7 @@ interface ImportM3UModalProps {
   onImported?: (result: ImportM3UResponse) => void;
 }
 
-type ImportMode = 'url' | 'content';
+type ImportMode = 'url' | 'content' | 'file';
 
 export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose, onImported }) => {
   const { t } = useTranslation(['components', 'common']);
@@ -26,6 +27,10 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
   const [overwrite, setOverwrite] = useState(false);
   const [result, setResult] = useState<ImportM3UResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importUrlMutation = useMutation({
     mutationFn: importM3UFromUrl,
@@ -64,7 +69,52 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
       importUrlMutation.mutate({ url: url.trim(), overwrite });
     } else if (mode === 'content' && content.trim()) {
       importContentMutation.mutate({ content: content.trim(), overwrite });
+    } else if (mode === 'file' && fileContent && fileContent.trim()) {
+      importContentMutation.mutate({ content: fileContent.trim(), overwrite });
     }
+  };
+
+  // 读取上传的 M3U 文件为文本
+  const handleFile = (file: File) => {
+    // 校验文件类型(.m3u / .m3u8 / 文本)
+    const validExt = /\.(m3u8?|txt)$/i.test(file.name);
+    if (!validExt && !file.type.startsWith('text/')) {
+      toast.error(t('components:importM3u.invalidFileType', { defaultValue: '请选择 .m3u 或 .m3u8 文件' }));
+      return;
+    }
+    // 大小限制 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error(t('components:importM3u.fileTooLarge', { defaultValue: '文件不能超过 10MB' }));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      setFileContent(text);
+      setFileName(file.name);
+    };
+    reader.onerror = () => {
+      toast.error(t('components:importM3u.fileReadError', { defaultValue: '文件读取失败' }));
+    };
+    reader.readAsText(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleClearFile = () => {
+    setFileContent(null);
+    setFileName(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleClose = () => {
@@ -73,6 +123,10 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
     setResult(null);
     setErrorMessage(null);
     setOverwrite(false);
+    setFileContent(null);
+    setFileName(null);
+    setDragging(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     onClose();
   };
 
@@ -98,6 +152,10 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
               <FileText size={16} />
               {t('components:importM3u.fromContent')}
             </button>
+            <button className={`modal-tab ${mode === 'file' ? 'active' : ''}`} onClick={() => setMode('file')}>
+              <FileUp size={16} />
+              {t('components:importM3u.fromFile', { defaultValue: '上传文件' })}
+            </button>
           </div>
 
           {mode === 'url' && (
@@ -117,6 +175,44 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
                 onChange={(e) => setContent(e.target.value)}
                 rows={10}
               />
+            </div>
+          )}
+
+          {mode === 'file' && (
+            <div className="form-group">
+              <label>{t('components:importM3u.fileLabel', { defaultValue: '选择本地 M3U 文件' })}</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".m3u,.m3u8,.txt"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+              {fileName ? (
+                <div className="file-selected">
+                  <FileText size={18} />
+                  <span className="file-name">{fileName}</span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleClearFile}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className={`file-dropzone ${dragging ? 'dragging' : ''}`}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={handleDrop}
+                >
+                  <FileUp size={32} />
+                  <span className="dropzone-text">
+                    {t('components:importM3u.dropHere', { defaultValue: '点击或拖拽 .m3u / .m3u8 文件到此处' })}
+                  </span>
+                  <span className="dropzone-hint">
+                    {t('components:importM3u.fileHint', { defaultValue: '支持 .m3u、.m3u8 格式，最大 10MB' })}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -169,7 +265,7 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={handleClose}>{t('common:cancel')}</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={isLoading || (mode === 'url' ? !url.trim() : !content.trim())}>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={isLoading || (mode === 'url' ? !url.trim() : mode === 'content' ? !content.trim() : !fileContent?.trim())}>
             {isLoading ? (
               <>
                 <Loader2 size={16} className="animate-spin" />

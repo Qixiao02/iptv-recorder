@@ -14,6 +14,7 @@
 - [🚀 快速开始](#-快速开始)
 - [🐳 Docker 部署](#-docker-部署)
 - [⚙️ 配置](#️-配置)
+- [🔒 安全](#-安全)
 - [📡 API 概览](#-api-概览)
 - [🏗️ 技术栈](#️-技术栈)
 - [📂 项目结构](#-项目结构)
@@ -61,7 +62,11 @@
 ### 安全与审计
 - JWT 认证 + 三级权限（admin / operator / viewer）
 - 关键操作审计日志（分页查询，默认 20 条/页，可选 20/50/100）
-- 流代理 URL 安全校验（拒绝 localhost / 非 http(s) scheme，防 SSRF）
+- 流代理 + 频道导入 + EPG 导入统一 SSRF 防护（拦截云元数据 / localhost / 内网域名，放行私有网段 IPTV 源）
+- JWT token 版本号吊销（改密后旧 token 立即失效）
+- 登录限流（IP 维度，5 次失败锁定 15 分钟）
+- 容器非 root 运行 + 最小权限（cap_drop ALL）
+- 安全响应头（nosniff / DENY / HSTS）+ CORS allowlist
 - 初始管理员账号自动初始化
 
 ### 存储
@@ -69,11 +74,13 @@
 - 录制路径**支持本地路径和网络路径**（UNC `\\server\share`、NFS/SMB 挂载点 `/mnt/nas`）
 - Docker 下可挂载宿主机磁盘到容器，Web UI 直接浏览选择宿主路径
 - 路径保存前**预校验**（创建目录 + 写权限验证），配错即时拦截
+- 录制 output_dir **限制在录制根目录下**（防越界写文件）
 - 自动清理过期录制（按天数）+ 最小剩余空间保护
 
 ### 界面
 - 中/英双语，深色 / 浅色主题切换
 - 状态语义色：**录制中（橙）**、已完成（绿）、失败（红），主题对比度优化
+- 全局 toast 弹出提示（所有操作成功/失败即时反馈）
 
 ---
 
@@ -93,7 +100,7 @@ docker compose up -d --build
 
 - **后端 API**：`http://localhost:3033`（容器内 3000，宿主映射 3033）
 - **默认账号**：`admin`（密码由生成脚本输出,或自行在 `.env` 设置 `IPTV_INITIAL_ADMIN_PASSWORD`;登录后请立即在「账户」页修改）
-- ⚠️ **务必先运行生成脚本**:不生成 `.env` 则后端会因缺少 `IPTV_JWT_SECRET` 拒绝启动
+- ⚠️ **务必先运行生成脚本**：不生成 `.env` 则后端会因缺少 `IPTV_JWT_SECRET` 拒绝启动
 
 > 生产构建已把前端打包进后端镜像，访问 `:3033` 即得完整界面。
 > 如需前端热更新开发，见 [开发命令](#-开发命令)。
@@ -102,7 +109,9 @@ docker compose up -d --build
 
 ```bash
 # 终端 1 - 后端
-cd backend && cargo run
+cd backend
+export IPTV_JWT_SECRET="your-secret-at-least-32-characters-long"  # 必填
+cargo run
 
 # 终端 2 - 前端
 cd frontend && pnpm install && pnpm dev
@@ -114,6 +123,17 @@ cd frontend && pnpm install && pnpm dev
 ---
 
 ## 🐳 Docker 部署
+
+### 容器安全
+
+容器默认以**非 root 用户**（`app`）运行，并应用最小权限策略：
+
+```yaml
+security_opt:
+  - no-new-privileges:true
+cap_drop:
+  - ALL
+```
 
 ### 录制到网络路径 / 宿主机路径
 
@@ -159,6 +179,7 @@ docker compose -f docker-compose.dev.yml up -d
 |---------|------|-------|
 | `IPTV__SERVER__HOST` | 监听地址 | `127.0.0.1` |
 | `IPTV__SERVER__PORT` | 监听端口 | `3000` |
+| `IPTV__SERVER__CORS_ORIGINS` | CORS 允许的来源（逗号分隔） | `localhost:5173,127.0.0.1:5173,...` |
 | `IPTV__DATABASE__PATH` | SQLite 路径 | `data/iptv-recorder.db` |
 | `IPTV__STORAGE__RECORDINGS_DIR` | 录制保存目录 | `data/recordings` |
 | `IPTV__STORAGE__TEMP_DIR` | 临时文件目录 | `data/.tmp` |
@@ -173,6 +194,47 @@ docker compose -f docker-compose.dev.yml up -d
 
 ---
 
+## 🔒 安全
+
+### 密钥管理
+
+- JWT 密钥和初始密码**不硬编码在代码中**，通过 `.env` 文件提供
+- 首次部署运行 `scripts/generate-env.{sh,ps1}` 自动生成随机密钥
+- `.env` 已被 `.gitignore` 忽略，参考 `.env.example` 模板
+
+### 认证与授权
+
+- **JWT** HS256 签名 + `iss`/`aud` 校验，防跨服务 token 复用
+- **token 版本号吊销**：改密码后 `token_version + 1`，所有旧 token（含 WebSocket 连接）立即失效
+- **三级 RBAC**：敏感路由（配置修改、目录枚举、系统健康、审计日志）限 admin；录制/转码限 operator
+- **登录限流**：IP 维度，连续 5 次失败锁定 15 分钟
+
+### SSRF 防护
+
+- 频道导入、EPG 导入、流代理统一走 `url_safety` 模块校验
+- 拦截：localhost、内网域名（.local/.internal/.lan）、云元数据（169.254.x.x）、环回地址
+- 放行：私有网段（10.x / 192.168.x）——内网 IPTV 源是合法场景
+
+### 信息泄露防护
+
+- 错误响应脱敏：内部错误不回传原始堆栈，只返回通用文案（详情记日志）
+- 日志脱敏：录制 URL 隐藏 query 中的 token/key 参数；访问日志屏蔽 `?token=`
+- 初始密码不再以明文写入日志
+
+### 传输安全
+
+- CORS 收敛到显式 allowlist（`IPTV__SERVER__CORS_ORIGINS`）
+- 安全响应头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Strict-Transport-Security`、`Referrer-Policy: no-referrer`
+- WebSocket：Origin 校验 + 每 5 分钟复查 token_version
+
+### 容器隔离
+
+- 非 root 用户（`app`）运行
+- `cap_drop: ALL` + `no-new-privileges`
+- 录制 output_dir 限制在录制根目录下，防越界写文件
+
+---
+
 ## 📡 API 概览
 
 Base URL：`http://localhost:3033/api`（除登录外需 `Authorization: Bearer <token>`）
@@ -180,16 +242,16 @@ Base URL：`http://localhost:3033/api`（除登录外需 `Authorization: Bearer 
 ### 鉴权
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/auth/login` | 登录获取 token |
+| POST | `/api/auth/login` | 登录获取 token（限流保护） |
 | GET | `/api/auth/me` | 当前用户信息 |
-| POST | `/api/auth/password` | 修改密码 |
+| POST | `/api/auth/password` | 修改密码（旧 token 立即吊销） |
 
 ### 频道
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/channels` | 分页列表（`?page=&page_size=&group=&search=`） |
 | GET | `/api/channels/all` | 全部频道 |
-| POST/PUT/DELETE | `/api/channels[/{id}]` | 频道 CRUD |
+| POST/PUT/DELETE | `/api/channels[/{id}]` | 频道 CRUD（SSRF 校验） |
 | POST | `/api/channels/import/url` | 从 URL 导入 M3U |
 | POST | `/api/channels/import/content` | 从文本导入 M3U |
 | POST | `/api/channels/{id}/test` | 测试连通性 |
@@ -216,10 +278,10 @@ Base URL：`http://localhost:3033/api`（除登录外需 `Authorization: Bearer 
 ### 系统
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET/POST | `/api/config` | 读取/更新配置 |
-| GET | `/api/system/health` | 系统健康 |
-| GET | `/api/system/directories` | 目录浏览（选择器） |
-| GET | `/api/audit/logs` | 审计日志（分页） |
+| GET/POST | `/api/config` | 读取/更新配置（admin） |
+| GET | `/api/system/health` | 系统健康（admin） |
+| GET | `/api/system/directories` | 目录浏览（admin） |
+| GET | `/api/audit/logs` | 审计日志（admin，分页） |
 | POST | `/api/system/cleanup/run` | 手动触发清理 |
 
 ### 实时
@@ -259,29 +321,33 @@ Base URL：`http://localhost:3033/api`（除登录外需 `Authorization: Bearer 
 iptv-recorder/
 ├── backend/
 │   ├── config/default.toml        # 默认配置
-│   ├── migrations/                # SQL 迁移(0001 schema ~ 0005 notifications)
+│   ├── migrations/                # SQL 迁移(schema ~ notifications ~ token_version)
 │   └── src/
-│       ├── api/                   # HTTP 路由 / handlers / WebSocket
+│       ├── api/                   # HTTP 路由 / handlers / WebSocket / 限流
 │       ├── core/                  # 数据库 / 事件总线 / 进程管理
 │       ├── models/                # 数据模型
 │       ├── services/              # 业务逻辑
-│       │   ├── channel.rs         # 频道 CRUD + M3U 导入
-│       │   ├── recording.rs       # 录制执行 + 终态通知
+│       │   ├── channel.rs         # 频道 CRUD + M3U 导入 + SSRF 校验
+│       │   ├── recording.rs       # 录制执行 + 终态通知 + output_dir 限制
 │       │   ├── scheduler.rs       # Cron 调度
 │       │   ├── transcode.rs       # UDP→HLS 转码预览
 │       │   ├── notification.rs    # 应用内通知中心
 │       │   ├── heartbeat.rs       # 后台巡检(磁盘空间)
-│       │   └── cleanup.rs         # 自动清理
+│       │   ├── cleanup.rs         # 自动清理
+│       │   ├── auth.rs            # JWT 认证 + token 版本号吊销
+│       │   └── url_safety.rs      # SSRF 防护(共享模块)
 │       └── main.rs                # 入口:编排各服务启动
 ├── frontend/
 │   └── src/
 │       ├── api/                   # API 客户端
-│       ├── components/            # 通用组件(Modal / 铃铛 / 计划弹窗)
+│       ├── components/            # 通用组件(Modal / 铃铛 / 计划弹窗 / Markdown)
 │       ├── pages/                 # 页面(Dashboard / Channels / Schedules / Tasks / Settings)
-│       ├── stores/                # Zustand 状态
+│       ├── stores/                # Zustand 状态(auth / toast / notification)
 │       └── i18n/                  # 模块化双语文案
-├── docker-compose.yml             # 后端编排(含宿主机/网络路径挂载示例)
-├── Dockerfile                     # 多阶段构建(builder + runtime)
+├── scripts/generate-env.{sh,ps1}  # 密钥生成脚本
+├── deny.toml                      # cargo-deny 配置(漏洞+协议审计)
+├── docker-compose.yml             # 后端编排(rootless + 安全加固)
+├── Dockerfile                     # 多阶段构建(非 root 用户)
 └── frontend/docker-compose.dev.yml # 前端开发容器(HMR + 源码外挂)
 ```
 
@@ -292,10 +358,12 @@ iptv-recorder/
 ### 后端
 ```bash
 cd backend
-cargo run                  # 开发运行
+cargo run                  # 开发运行(需设置 IPTV_JWT_SECRET)
 cargo build --release      # 发布构建
 cargo test                 # 运行测试
 cargo clippy               # Lint 检查
+cargo audit                # 漏洞扫描(需 cargo install cargo-audit)
+cargo deny check           # 全面的依赖审计(需 cargo install cargo-deny)
 cargo fmt                  # 格式化
 ```
 
@@ -320,6 +388,8 @@ pnpm tsc --noEmit          # 类型检查
 实时更新:  事件总线(broadcast) → WebSocket 转发 → 前端 TanStack Query 自动失效刷新
 
 磁盘巡检:  Heartbeat(每10分钟) → 探测录制目录空间 → 低于阈值 → 发警告通知
+
+认证吊销:  改密码 → token_version +1 → 旧 JWT/WS 连接立即失效
 ```
 
 ---
