@@ -43,6 +43,7 @@ export const Channels: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  const [selectedSource, setSelectedSource] = useState<string>('all');
   const [selectedChannels, setSelectedChannels] = useState<Set<string>>(new Set());
   const [showImportModal, setShowImportModal] = useState(false);
   const [showChannelModal, setShowChannelModal] = useState(false);
@@ -69,14 +70,15 @@ export const Channels: React.FC = () => {
 
   useEffect(() => {
     queueMicrotask(() => setPage(1));
-  }, [selectedGroup]);
+  }, [selectedGroup, selectedSource]);
 
   const { data: channelsData, isLoading } = useQuery({
-    queryKey: ['channels', page, pageSize, selectedGroup, debouncedSearch],
+    queryKey: ['channels', page, pageSize, selectedGroup, selectedSource, debouncedSearch],
     queryFn: () => getChannels({
       page,
       page_size: pageSize,
       group: selectedGroup !== 'all' ? selectedGroup : undefined,
+      source_visibility: selectedSource !== 'all' ? (selectedSource as 'public' | 'private_server_only') : undefined,
       search: debouncedSearch || undefined,
     }),
   });
@@ -370,6 +372,19 @@ export const Channels: React.FC = () => {
                   {group}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="input"
+              aria-label={t('channels:sourceFilter')}
+            >
+              <option value="all">{t('channels:source.all')}</option>
+              <option value="public">{t('channels:source.public')}</option>
+              <option value="private_server_only">{t('channels:source.private')}</option>
             </select>
           </div>
 

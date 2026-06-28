@@ -15,6 +15,7 @@ export interface PaginationParams {
   page_size?: number;
   group?: string;
   search?: string;
+  source_visibility?: 'public' | 'private_server_only' | 'all';
 }
 
 // 分页响应
@@ -67,6 +68,7 @@ export const getChannels = (params?: PaginationParams): Promise<PaginatedRespons
   if (params?.page_size) queryParams.append('page_size', params.page_size.toString());
   if (params?.group) queryParams.append('group', params.group);
   if (params?.search) queryParams.append('search', params.search);
+  if (params?.source_visibility) queryParams.append('source_visibility', params.source_visibility);
 
   const queryString = queryParams.toString();
   const url = queryString ? `/channels?${queryString}` : '/channels';

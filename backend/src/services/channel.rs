@@ -34,12 +34,15 @@ pub struct PaginatedChannels {
 }
 
 /// 分页查询参数
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct PaginationParams {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
     pub group: Option<String>,
     pub search: Option<String>,
+    /// 来源筛选：`public`(公网源) / `private_server_only`(私有源)。为空或 `all` 时不筛选。
+    #[serde(default)]
+    pub source_visibility: Option<String>,
 }
 
 pub struct ChannelService {
@@ -130,6 +133,14 @@ impl ChannelService {
             if !search.is_empty() {
                 where_clauses.push("name LIKE ?");
                 bind_values.push(format!("%{}%", search));
+            }
+        }
+
+        // 来源筛选：公网源 / 私有源（内网）。用于频道管理页区分同名但地址不同的频道。
+        if let Some(source) = &params.source_visibility {
+            if !source.is_empty() && source != "all" {
+                where_clauses.push("source_visibility = ?");
+                bind_values.push(source.clone());
             }
         }
 
@@ -788,6 +799,83 @@ mod tests {
             .expect("create channel");
 
         assert_eq!(stored.source_visibility, "private_server_only");
+
+        let _ = tokio::fs::remove_file(db_path).await;
+    }
+
+    /// 来源筛选：source_visibility=private_server_only 时只返回私有源，
+    /// source_visibility=public 时只返回公网源，不传/传 all 时返回全部。
+    /// 对应「频道管理页」按 公网源/私有源 筛选的需求。
+    #[tokio::test]
+    async fn list_paginated_filters_by_source_visibility() {
+        let (service, db_path) = test_service("channel-source-filter").await;
+
+        // 公网源频道（公网 URL 保持 public）
+        service
+            .create(CreateChannelRequest {
+                name: "公网频道".to_string(),
+                url: "http://example.com/live.m3u8".to_string(),
+                group_name: "G".to_string(),
+                logo_url: None,
+                source_visibility: "public".to_string(),
+                playback_strategy: "auto".to_string(),
+            })
+            .await
+            .expect("create public channel");
+
+        // 私有源频道（内网 URL 会被自动标记为 private_server_only）
+        service
+            .create(CreateChannelRequest {
+                name: "内网频道".to_string(),
+                url: "http://192.168.0.211:4022/udp/239.77.0.5".to_string(),
+                group_name: "G".to_string(),
+                logo_url: None,
+                source_visibility: "public".to_string(),
+                playback_strategy: "auto".to_string(),
+            })
+            .await
+            .expect("create private channel");
+
+        // 筛选私有源：只应返回内网频道
+        let private_result = service
+            .list_paginated(PaginationParams {
+                source_visibility: Some("private_server_only".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list private");
+        assert_eq!(private_result.total, 1);
+        assert_eq!(private_result.items[0].name, "内网频道");
+        assert_eq!(private_result.items[0].source_visibility, "private_server_only");
+
+        // 筛选公网源：只应返回公网频道
+        let public_result = service
+            .list_paginated(PaginationParams {
+                source_visibility: Some("public".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list public");
+        assert_eq!(public_result.total, 1);
+        assert_eq!(public_result.items[0].name, "公网频道");
+        assert_eq!(public_result.items[0].source_visibility, "public");
+
+        // 不筛选：返回全部
+        let all_result = service
+            .list_paginated(PaginationParams::default())
+            .await
+            .expect("list all");
+        assert_eq!(all_result.total, 2);
+
+        // source_visibility = "all" 等同于不筛选
+        let all_via_all = service
+            .list_paginated(PaginationParams {
+                source_visibility: Some("all".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list all via all");
+        assert_eq!(all_via_all.total, 2);
 
         let _ = tokio::fs::remove_file(db_path).await;
     }
