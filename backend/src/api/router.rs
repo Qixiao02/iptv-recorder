@@ -199,8 +199,32 @@ pub async fn create_router(
         // 中间件
         .layer(Extension(transcode_service))
         .layer(Extension(event_bus))
+        // DB pool 同时作为 Extension 提供,供认证中间件校验 token_version
+        .layer(Extension(db.clone()))
         .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
+        // TraceLayer:自定义 span,屏蔽请求 URI 里的 token 参数(防止 JWT 进访问日志)
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &axum::extract::Request| {
+                let uri = request.uri().to_string();
+                let redacted = if let Some((path, query)) = uri.split_once('?') {
+                    let cleaned: Vec<&str> = query
+                        .split('&')
+                        .map(|kv| {
+                            if let Some((k, _)) = kv.split_once('=') {
+                                if k.eq_ignore_ascii_case("token") {
+                                    return "token=***";
+                                }
+                            }
+                            kv
+                        })
+                        .collect();
+                    format!("{}?{}", path, cleaned.join("&"))
+                } else {
+                    uri
+                };
+                tracing::info_span!("http_request", method = %request.method(), uri = %redacted)
+            }),
+        )
         .with_state((db, scheduler, process_manager, config));
 
     Ok(app)

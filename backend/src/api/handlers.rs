@@ -1097,12 +1097,13 @@ pub async fn ws_handler(
     Query(params): Query<WsQuery>,
     Extension(event_bus): Extension<Arc<EventBus>>,
 ) -> impl IntoResponse {
-    // 验证 token
+    // 验证 token(含 token_version 吊销检查)
     let token = match &params.token {
         Some(t) => t,
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
-    if AuthService::verify_token(token).is_err() {
+    let auth_service = AuthService::new(db.clone());
+    if auth_service.verify_token_with_db(token).await.is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
@@ -1111,26 +1112,32 @@ pub async fn ws_handler(
 
 // ===== 辅助函数 =====
 
+/// 内部错误:不向客户端泄露原始错误(DB 错误/文件路径/SQL 片段等),
+/// 只返回通用文案;原始错误记入服务端日志便于排查。
 fn internal_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
+    tracing::error!("Internal error: {:?}", err);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {
             error: "internal_error".to_string(),
-            details: Some(err.to_string()),
+            details: Some("服务器内部错误,请稍后重试或联系管理员".to_string()),
         }),
     )
 }
 
+/// 资源不存在:同样不回传可能含内部信息的原始错误,记日志后返回通用文案。
 fn not_found_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
+    tracing::warn!("Resource not found: {:?}", err);
     (
         StatusCode::NOT_FOUND,
         Json(ErrorResponse {
             error: "not_found".to_string(),
-            details: Some(err.to_string()),
+            details: Some("请求的资源不存在".to_string()),
         }),
     )
 }
 
+/// 请求参数错误:保留原始错误(用户输入错误,需告知具体原因以便修正)
 fn bad_request_error(err: anyhow::Error) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::BAD_REQUEST,
@@ -1154,10 +1161,11 @@ pub struct StreamProxyQuery {
 
 /// 流代理处理器 - 用于绕过 CORS 限制
 pub async fn stream_proxy(
+    State((db, _scheduler, _process_manager, _config)): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<StreamProxyQuery>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    let _claims = authorize_stream_proxy(&headers, query.token.as_deref())?;
+    let _claims = authorize_stream_proxy(&db, &headers, query.token.as_deref()).await?;
     validate_proxy_url(&query.url).await?;
 
     proxy_stream_response(&query.url).await
@@ -1169,7 +1177,7 @@ pub async fn channel_stream(
     Path(id): Path<String>,
     Query(query): Query<WsQuery>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    let _claims = authorize_stream_proxy(&headers, query.token.as_deref())?;
+    let _claims = authorize_stream_proxy(&db, &headers, query.token.as_deref()).await?;
 
     let ctx = ServiceContext::new(db, config);
     let service = ChannelService::new(ctx);
@@ -1240,7 +1248,8 @@ async fn proxy_stream_response(
         .map_err(|e| internal_error(anyhow::anyhow!("构建响应失败: {}", e)))
 }
 
-fn authorize_stream_proxy(
+async fn authorize_stream_proxy(
+    db: &Pool<Sqlite>,
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> Result<Claims, (StatusCode, Json<ErrorResponse>)> {
@@ -1259,7 +1268,8 @@ fn authorize_stream_proxy(
         )
     })?;
 
-    AuthService::verify_token(token).map_err(|e| {
+    let auth_service = AuthService::new(db.clone());
+    auth_service.verify_token_with_db(token).await.map_err(|e| {
         (
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {

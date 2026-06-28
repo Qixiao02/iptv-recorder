@@ -12,6 +12,9 @@ use crate::models::{ChangePasswordRequest, LoginRequest, LoginResponse, User, Us
 /// JWT 配置
 const JWT_EXPIRATION_HOURS: i64 = 24;
 const MIN_JWT_SECRET_LEN: usize = 32;
+/// JWT 签发者/受众(用于 iss/aud 校验,防跨服务 token 复用)
+const JWT_ISSUER: &str = "iptv-recorder";
+const JWT_AUDIENCE: &str = "iptv-recorder-web";
 
 fn jwt_secret() -> Result<Vec<u8>> {
     let secret = std::env::var("IPTV_JWT_SECRET")
@@ -30,11 +33,17 @@ fn jwt_secret() -> Result<Vec<u8>> {
 /// JWT Claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // user id
+    pub sub: String,    // user id
     pub username: String,
     pub role: String,
-    pub exp: usize, // expiration time
-    pub iat: usize, // issued at
+    pub exp: usize,     // expiration time
+    pub iat: usize,     // issued at
+    /// token 版本号:与用户表 token_version 比对,不等则视为已吊销
+    pub tv: i64,
+    /// 签发者(用于 iss 校验)
+    pub iss: String,
+    /// 受众(用于 aud 校验)
+    pub aud: String,
 }
 
 impl Claims {
@@ -100,8 +109,8 @@ impl AuthService {
             .await?;
 
             tracing::warn!(
-                "Created initial admin user. username=admin, password={}. 请立即登录并修改密码，或通过 IPTV_INITIAL_ADMIN_PASSWORD 显式设置首个管理员密码。",
-                initial_password
+                "Created initial admin user (username=admin). \
+                 若未通过 IPTV_INITIAL_ADMIN_PASSWORD 显式设置,密码已随机生成,请通过安全渠道(如环境变量/配置管理)获取,不要在日志中记录。"
             );
         }
 
@@ -145,6 +154,9 @@ impl AuthService {
             role: user.role.clone(),
             exp: exp.timestamp() as usize,
             iat: now.timestamp() as usize,
+            tv: user.token_version,
+            iss: JWT_ISSUER.to_string(),
+            aud: JWT_AUDIENCE.to_string(),
         };
 
         encode(
@@ -155,16 +167,35 @@ impl AuthService {
         .map_err(|e| anyhow!("生成 Token 失败: {}", e))
     }
 
-    /// 验证 JWT Token
+    /// 验证 JWT Token(签名 + 过期 + iss/aud)
     pub fn verify_token(token: &str) -> Result<Claims> {
+        let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.set_issuer(&[JWT_ISSUER]);
+        validation.set_audience(&[JWT_AUDIENCE]);
+
         let token_data = decode::<Claims>(
             token,
             &DecodingKey::from_secret(&jwt_secret()?),
-            &Validation::default(),
+            &validation,
         )
         .map_err(|e| anyhow!("Token 无效: {}", e))?;
 
         Ok(token_data.claims)
+    }
+
+    /// 验证 JWT Token 并比对 token_version(吊销检查)。
+    /// 用于 WS / 流代理等不经过 auth_middleware 的入口。
+    pub async fn verify_token_with_db(&self, token: &str) -> Result<Claims> {
+        let claims = Self::verify_token(token)?;
+        let current_tv: i64 = sqlx::query_scalar("SELECT token_version FROM users WHERE id = ?")
+            .bind(&claims.sub)
+            .fetch_optional(&self.db)
+            .await?
+            .unwrap_or(-1);
+        if current_tv != claims.tv {
+            return Err(anyhow!("Token 已失效,请重新登录"));
+        }
+        Ok(claims)
     }
 
     /// 获取当前用户
@@ -195,13 +226,15 @@ impl AuthService {
         let new_hash = hash(&req.new_password, DEFAULT_COST)?;
         let now = Utc::now().to_rfc3339();
 
-        // 更新密码
-        sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
-            .bind(&new_hash)
-            .bind(&now)
-            .bind(user_id)
-            .execute(&self.db)
-            .await?;
+        // 更新密码 + token_version +1(使所有旧 token 立即失效)
+        sqlx::query(
+            "UPDATE users SET password_hash = ?, token_version = token_version + 1, updated_at = ? WHERE id = ?",
+        )
+        .bind(&new_hash)
+        .bind(&now)
+        .bind(user_id)
+        .execute(&self.db)
+        .await?;
 
         tracing::info!("User {} changed password", user.username);
 

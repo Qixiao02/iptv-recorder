@@ -5,8 +5,10 @@ use axum::{
     http::{header, StatusCode},
     middleware::Next,
     response::Json,
+    Extension,
 };
 use serde::Serialize;
+use sqlx::{Pool, Sqlite};
 
 use crate::services::{AuthService, Claims};
 
@@ -17,8 +19,9 @@ pub struct AuthError {
     pub details: Option<String>,
 }
 
-/// 认证中间件
+/// 认证中间件:校验 JWT 签名 + 过期 + iss/aud + token_version(吊销检查)
 pub async fn auth_middleware(
+    Extension(db): Extension<Pool<Sqlite>>,
     request: Request,
     next: Next,
 ) -> Result<axum::response::Response, (StatusCode, Json<AuthError>)> {
@@ -41,22 +44,30 @@ pub async fn auth_middleware(
         }
     };
 
-    // 验证 Token
-    match AuthService::verify_token(token) {
-        Ok(claims) => {
-            // 将用户信息添加到 request extensions
-            let mut request = request;
-            request.extensions_mut().insert(claims);
-            Ok(next.run(request).await)
+    // 验证 Token:签名 + 过期 + iss/aud + token_version(吊销检查),复用 AuthService
+    let auth_service = AuthService::new(db);
+    let claims = match auth_service.verify_token_with_db(token).await {
+        Ok(c) => c,
+        Err(e) => {
+            let is_revoked = e.to_string().contains("失效");
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(AuthError {
+                    error: if is_revoked {
+                        "token_revoked".to_string()
+                    } else {
+                        "unauthorized".to_string()
+                    },
+                    details: Some(e.to_string()),
+                }),
+            ));
         }
-        Err(e) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(AuthError {
-                error: "unauthorized".to_string(),
-                details: Some(e.to_string()),
-            }),
-        )),
-    }
+    };
+
+    // 将用户信息添加到 request extensions
+    let mut request = request;
+    request.extensions_mut().insert(claims);
+    Ok(next.run(request).await)
 }
 
 /// 需要 operator/admin 权限的中间件

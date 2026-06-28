@@ -195,7 +195,7 @@ impl ProcessManager {
             cmd.arg(&config.output_path);
 
             info!("FFmpeg command:");
-            info!("  URL: {}", config.url);
+            info!("  URL: {}", redact_url_for_log(&config.url));
             info!("  output: {}", config.output_path.display());
             info!("  duration: {:?}s", config.duration_seconds);
         } else {
@@ -284,7 +284,7 @@ impl ProcessManager {
 
             // 打印完整命令用于调试
             info!("N_m3u8DL-RE 完整命令:");
-            info!("  URL: {}", config.url);
+            info!("  URL: {}", redact_url_for_log(&config.url));
             info!("  save-dir: {:?}", config.output_path.parent());
             info!("  save-name: {:?}", config.output_path.file_stem());
             info!("  duration: {:?}s", config.duration_seconds);
@@ -498,6 +498,39 @@ impl ProcessManager {
         }
 
         Ok(())
+    }
+}
+
+/// URL 日志脱敏:隐藏 query string 中的敏感参数(token/key/password/sign/auth)。
+/// 例:`http://x.com/stream?token=abc&foo=bar` → `http://x.com/stream?token=***&foo=bar`
+fn redact_url_for_log(url: &str) -> String {
+    if let Some((before_q, query)) = url.split_once('?') {
+        let redacted: Vec<String> = query
+            .split('&')
+            .map(|kv| {
+                if let Some((k, _)) = kv.split_once('=') {
+                    let key = k.to_ascii_lowercase();
+                    if key.contains("token")
+                        || key.contains("key")
+                        || key.contains("password")
+                        || key.contains("passwd")
+                        || key.contains("sign")
+                        || key.contains("auth")
+                        || key.contains("secret")
+                        || key.contains("access")
+                    {
+                        format!("{}=***", k)
+                    } else {
+                        kv.to_string()
+                    }
+                } else {
+                    kv.to_string()
+                }
+            })
+            .collect();
+        format!("{}?{}", before_q, redacted.join("&"))
+    } else {
+        url.to_string()
     }
 }
 

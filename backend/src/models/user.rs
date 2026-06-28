@@ -54,6 +54,8 @@ pub struct User {
     pub password_hash: String,
     pub nickname: Option<String>,
     pub role: String,
+    /// token 版本号:改密码/降权时 +1,用于吊销旧 token
+    pub token_version: i64,
     pub created_at: String,
     pub updated_at: String,
 }
