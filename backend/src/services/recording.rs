@@ -834,16 +834,7 @@ impl RecordingService {
         // 优先级：output_template > custom_name > 默认模板
         let filename = if let Some(template) = output_template {
             if !template.is_empty() {
-                // 使用模板替换变量
-                let now = Utc::now();
-                let channel_name = Self::sanitize_filename_part(&channel.name);
-
-                let filename = template
-                    .replace("{channel_name}", &channel_name)
-                    .replace("{date}", &now.format("%Y%m%d").to_string())
-                    .replace("{time}", &now.format("%H%M%S").to_string())
-                    .replace("{datetime}", &now.format("%Y%m%d_%H%M%S").to_string());
-
+                let filename = Self::render_output_template(template, channel);
                 // 去掉可能的后缀
                 let filename = filename.trim();
                 let filename = filename
@@ -878,6 +869,39 @@ impl RecordingService {
 
         info!("最终输出路径: {}/{}", output_dir, filename);
         Ok(PathBuf::from(&output_dir).join(filename))
+    }
+
+    /// 渲染输出文件名模板，替换可用变量。
+    ///
+    /// 支持的变量（均先经过文件名安全清洗）：
+    ///   - `{channel_name}` 频道名
+    ///   - `{date}`         日期 YYYYMMDD
+    ///   - `{time}`         时间 HHMMSS
+    ///   - `{datetime}`     日期时间 YYYYMMDD_HHMMSS
+    ///   - `{source}`       来源类型：`public`(公网源) / `private`(私有源)
+    ///   - `{group}`        分组名
+    ///   - `{source_url}`   源地址（URL，非法文件名字符会被替换为 `_`）
+    ///
+    /// 注意：未识别的 `{xxx}` 占位符会原样保留，随后由 sanitize_output_filename 兜底清洗。
+    fn render_output_template(template: &str, channel: &Channel) -> String {
+        let now = Utc::now();
+        let channel_name = Self::sanitize_filename_part(&channel.name);
+        let source = if channel.source_visibility == "private_server_only" {
+            "private"
+        } else {
+            "public"
+        };
+        let group = Self::sanitize_filename_part(&channel.group_name);
+        let source_url = Self::sanitize_filename_part(&channel.url);
+
+        template
+            .replace("{channel_name}", &channel_name)
+            .replace("{date}", &now.format("%Y%m%d").to_string())
+            .replace("{time}", &now.format("%H%M%S").to_string())
+            .replace("{datetime}", &now.format("%Y%m%d_%H%M%S").to_string())
+            .replace("{source}", source)
+            .replace("{group}", &group)
+            .replace("{source_url}", &source_url)
     }
 
     /// 生成默认文件名
@@ -2359,5 +2383,72 @@ mod tests {
     fn sanitize_filename_preserves_unicode_letters() {
         let sanitized = RecordingService::sanitize_filename_part("央视新闻 / 直播");
         assert_eq!(sanitized, "央视新闻___直播");
+    }
+
+    /// 辅助：构造一个最小可用的 Channel 用于模板渲染测试。
+    fn sample_channel(name: &str, url: &str, group: &str, source_visibility: &str) -> Channel {
+        Channel {
+            id: "test-id".to_string(),
+            name: name.to_string(),
+            url: url.to_string(),
+            group_name: group.to_string(),
+            logo_url: None,
+            source_type: String::new(),
+            source_url: None,
+            status: String::new(),
+            last_check_at: None,
+            fail_count: 0,
+            metadata: serde_json::json!({}),
+            source_visibility: source_visibility.to_string(),
+            playback_strategy: "auto".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn render_output_template_substitutes_legacy_variables() {
+        let ch = sample_channel("CCTV-1", "http://example.com/live.m3u8", "央视", "public");
+        // 旧变量不应回归；channel_name 含空格会被清洗为 _
+        let out = RecordingService::render_output_template("{channel_name}_{date}_{time}", &ch);
+        // 形如 CCTV-1_YYYYMMDD_HHMMSS：channel_name 后紧跟日期、再紧跟时间，至少两个分隔下划线
+        assert!(
+            out.starts_with("CCTV-1_") && out.matches('_').count() >= 2,
+            "channel_name/date/time 应被替换: {out}"
+        );
+    }
+
+    #[test]
+    fn render_output_template_substitutes_source_group_and_url() {
+        let ch = sample_channel(
+            "东方卫视4K",
+            "http://192.168.0.211:4022/udp/239.77.0.5",
+            "4K频道",
+            "private_server_only",
+        );
+        let out = RecordingService::render_output_template(
+            "{channel_name}_{source}_{group}_{source_url}",
+            &ch,
+        );
+        // source: 私有源 -> private
+        assert!(out.contains("_private_"), "source 应为 private: {out}");
+        // group: 分组名应被替换
+        assert!(out.contains("4K频道"), "group 应被替换: {out}");
+        // source_url: URL 中的 :// / 等非法字符应被清洗为 _
+        assert!(
+            !out.contains("://"),
+            "source_url 中的协议分隔符应被清洗: {out}"
+        );
+        assert!(
+            out.contains("192.168.0.211"),
+            "source_url 应保留主机地址: {out}"
+        );
+    }
+
+    #[test]
+    fn render_output_template_source_is_public_for_public_channel() {
+        let ch = sample_channel("公网台", "http://example.com/live.m3u8", "G", "public");
+        let out = RecordingService::render_output_template("{source}", &ch);
+        assert_eq!(out, "public");
     }
 }
