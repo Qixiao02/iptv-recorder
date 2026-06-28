@@ -647,7 +647,32 @@
 }
 
 .audit-table-wrap {
-  overflow-x: auto;
+  overflow: auto;
+  /* 限制高度，条目多时表体内部滚动，而不是把整个页面撑长 */
+  max-height: 460px;
+  /* 细滚动条 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default, #cbd5e1) transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.audit-table-wrap::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.audit-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.audit-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--border-default, #cbd5e1);
+  border-radius: 4px;
+}
+
+.audit-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary, #94a3b8);
 }
 
 .audit-table {
@@ -668,6 +693,13 @@
   font-size: 12px;
   color: var(--text-tertiary);
   font-weight: 600;
+  /* 表头随滚动常驻：sticky 必须配合 wrap 的高度限制 + 滚动 */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-panel, #f8fafc);
+  /* 覆盖最后一行 th 的 border，避免与 sticky 视觉错位 */
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
 }
 
 .audit-table td {
