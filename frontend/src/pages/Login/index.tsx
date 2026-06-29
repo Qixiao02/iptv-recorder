@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { login } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
-import { Clapperboard, User, Lock, Loader2, AlertCircle } from 'lucide-react';
+import { User, Lock, Loader2, AlertCircle } from 'lucide-react';
 import './Login.css';
 
 export const Login: React.FC = () => {
@@ -49,7 +49,7 @@ export const Login: React.FC = () => {
       <div className="login-container">
         <div className="login-header">
           <div className="login-logo">
-            <Clapperboard size={48} strokeWidth={1.5} />
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="IPTV Recorder" />
           </div>
           <h1 className="login-title">IPTV Recorder</h1>
           <p className="login-subtitle">{t('login:subtitle')}</p>

@@ -62,6 +62,13 @@
   margin-bottom: 20px;
 }
 
+.login-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 20px;
+}
+
 .login-title {
   font-size: 28px;
   font-weight: 700;
