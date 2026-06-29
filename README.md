@@ -99,10 +99,11 @@ docker compose up -d --build
 ```
 
 - **后端 API**：`http://localhost:3033`（容器内 3000，宿主映射 3033）
+- **完整界面**：访问 `http://localhost:3033` 即得 React Web UI —— Dockerfile 多阶段构建已把前端 `dist` 打包进后端镜像，前后端**同源同端口**，无需单独部署前端
 - **默认账号**：`admin`（密码由生成脚本输出,或自行在 `.env` 设置 `IPTV_INITIAL_ADMIN_PASSWORD`;登录后请立即在「账户」页修改）
 - ⚠️ **务必先运行生成脚本**：不生成 `.env` 则后端会因缺少 `IPTV_JWT_SECRET` 拒绝启动
 
-> 生产构建已把前端打包进后端镜像，访问 `:3033` 即得完整界面。
+> 生产镜像采用单镜像设计：前端构建产物位于 `/app/static`，由后端 `ServeDir` 在 `/static` 路径下服务；其余路径通过 SPA fallback 返回 `index.html`，刷新任意前端路由（如 `/channels`）不会 404。
 > 如需前端热更新开发，见 [开发命令](#-开发命令)。
 
 ### 方式二：本地开发
@@ -347,8 +348,8 @@ iptv-recorder/
 ├── scripts/generate-env.{sh,ps1}  # 密钥生成脚本
 ├── deny.toml                      # cargo-deny 配置(漏洞+协议审计)
 ├── docker-compose.yml             # 后端编排(rootless + 安全加固)
-├── Dockerfile                     # 多阶段构建(非 root 用户)
-└── frontend/docker-compose.dev.yml # 前端开发容器(HMR + 源码外挂)
+├── Dockerfile                     # 多阶段构建(前端 dist + 后端二进制,非 root 用户,单镜像)
+└── frontend/docker-compose.dev.yml # 前端开发容器(HMR + 源码外挂,仅开发用)
 ```
 
 ---

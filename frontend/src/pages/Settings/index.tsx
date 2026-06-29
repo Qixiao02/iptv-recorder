@@ -822,7 +822,7 @@ export const SettingsPage: React.FC = () => {
             <h2>{t('settings:sections.about')}</h2>
             <div className="about-card">
               <div className="about-logo">
-                <img src="/logo.png" alt="IPTV Recorder" />
+                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="IPTV Recorder" />
               </div>
               <div className="about-info">
                 <h3>IPTV Recorder</h3>

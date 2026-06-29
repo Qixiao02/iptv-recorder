@@ -321,18 +321,23 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          // 缓冲配置 - 允许播放器先囤几片，减少“每切下一片就转圈”。
-          maxBufferLength: 45,
-          maxMaxBufferLength: 90,
-          maxBufferSize: 80 * 1000 * 1000,
-          maxBufferHole: 0.8,
+          // 缓冲配置 - 边看边转码场景，后端写分片有抖动，
+          // 前端要多囤缓冲 + 放宽时间戳容差，避免一点点抖动就转圈。
+          maxBufferLength: 60,
+          maxMaxBufferLength: 120,
+          maxBufferSize: 120 * 1000 * 1000,
+          // copy/remux 模式分片时长会在 GOP 边界漂移（2~6s），
+          // 原 0.8s 容差太严，会反复触发"缓冲缺口"判定 → 卡顿。放宽到 2s。
+          maxBufferHole: 2.0,
           liveDurationInfinity: true,
           backBufferLength: 30,
           liveBackBufferLength: 30,
           startLevel: -1,
           autoStartLoad: true,
-          liveSyncDurationCount: 4,
-          liveMaxLatencyDurationCount: 12,
+          // liveSyncDurationCount 4 = 落后直播边缘 4 个分片（~24s @6s 分片）。
+          // 太追边缘，后端任何抖动都会显现；6 个分片（~36s）给后端足够容错空间。
+          liveSyncDurationCount: 6,
+          liveMaxLatencyDurationCount: 15,
           startFragPrefetch: true,
           manifestLoadingTimeOut: 10000,
           manifestLoadingMaxRetry: 6,
@@ -403,10 +408,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferHole: 0.8,
-        liveSyncDurationCount: 4,
+        maxBufferLength: 40,
+        maxMaxBufferLength: 90,
+        // 直连源同样存在 remux 漂移，放宽容差。
+        maxBufferHole: 2.0,
+        liveSyncDurationCount: 5,
         liveMaxLatencyDurationCount: 12,
       });
 

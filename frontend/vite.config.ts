@@ -4,6 +4,10 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  // 生产构建产物由后端 ServeDir::new("static") 在 /static 路径下服务,
+  // 故 base 设为 /static/,使 index.html 中的资源引用变为 /static/assets/...
+  // (开发模式下 vite dev server 不受 base 影响,仍走根路径)。
+  base: '/static/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')

@@ -60,30 +60,33 @@ async fn record_audit(
     }
 }
 
-/// 首页处理器
-pub async fn index_handler() -> &'static str {
-    r#"
-    __  __            ____      _ _____           _
-    |  \/  |          / __ \    | |  __ \         | |
-    | \  / | ___ _ __| |  | | __| | |__) |_ _  ___| | _____
-    | |\/| |/ _ \ '__| |  | |/ _` |  ___/ _` |/ __| |/ / __|
-    | |  | |  __/ |  | |__| | (_| | |   | (_| | (__|   <\ \ \
-    |_|  |_|\___|_|   \____/ \__,_|_|    \__,_|\___|_|\_\___/
-
-    IPTV M3U Management & Recording System
-
-    API Endpoints:
-    - GET    /api/channels              - List all channels
-    - POST   /api/channels              - Create channel
-    - POST   /api/channels/import/url   - Import from URL
-    - GET    /api/schedules             - List all schedules
-    - POST   /api/schedules             - Create schedule
-    - GET    /api/tasks                 - List all tasks
-    - POST   /api/tasks/manual          - Start manual recording
-    - GET    /api/scheduler/upcoming    - Get upcoming tasks
-    - POST   /api/scheduler/reload      - Reload scheduler
-    - WS     /ws                        - WebSocket connection
-    "#
+/// SPA 首页处理器
+///
+/// 读取前端构建产物 `static/index.html` 返回。
+/// 作为路由树的 `fallback` 使用:除 `/api/*`、`/static/*` 等具名路由外,
+/// 任意前端路由(如 `/channels`、`/tasks`)刷新时都回退到此,
+/// 由 react-router 在客户端接管路由,实现 SPA history 模式。
+pub async fn spa_index_handler() -> Response {
+    match tokio::fs::read("static/index.html").await {
+        Ok(body) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(Body::from(body))
+            .unwrap(),
+        Err(e) => {
+            // static 目录缺失通常意味着:前端未构建,或镜像构建阶段未 COPY dist。
+            warn!("SPA 入口缺失 static/index.html: {}", e);
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(Body::from(
+                    "Frontend build not found. \
+                     Run `pnpm build` in frontend/ and ensure the Dockerfile \
+                     copies `dist` into `static/`.",
+                ))
+                .unwrap()
+        }
+    }
 }
 
 // ===== 频道处理器 =====
@@ -1531,12 +1534,6 @@ pub async fn get_hls_file(
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Path((session_id, filename)): Path<(String, String)>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    tracing::info!(
-        "get_hls_file called: session_id={}, filename={}",
-        session_id,
-        filename
-    );
-
     // 客户端正在拉取分片/播放列表 → 刷新空闲计时器，
     // 防止 cleanup 在用户还在观看时把会话回收掉（曾经的 5 分钟 manifestLoadError）。
     transcode_service.touch_session(&session_id).await;
@@ -1568,9 +1565,13 @@ pub async fn get_hls_file(
     let hls_dir = config.storage.preview_hls_dir();
     let file_path = hls_dir.join(&session_id).join(&filename);
 
-    tracing::info!("Looking for HLS file at: {:?}", file_path);
+    // 关键性能点：这里是播放热路径，每个分片都会被请求多次（m3u8 + 每个 .ts）。
+    // 之前每个请求都打 4 条 INFO 日志并格式化 PathBuf，会同步阻塞响应 → 播放卡顿。
+    // 现在只在 DEBUG 级别输出，生产环境默认 INFO 看不到，零开销。
+    tracing::debug!("get_hls_file: {} / {}", session_id, filename);
 
     if !file_path.exists() {
+        // 404 仍然需要 warn，方便排查"为什么播放器请求的分片没了"
         tracing::warn!("HLS file not found: {:?}", file_path);
         return Err((
             StatusCode::NOT_FOUND,
@@ -1585,8 +1586,6 @@ pub async fn get_hls_file(
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("读取文件失败: {}", e)))?;
 
-    tracing::info!("Successfully read HLS file, size: {} bytes", content.len());
-
     // 根据文件扩展名确定 Content-Type
     let content_type = if filename.ends_with(".m3u8") {
         "application/vnd.apple.mpegurl"
@@ -1596,13 +1595,19 @@ pub async fn get_hls_file(
         "application/octet-stream"
     };
 
-    tracing::info!("Returning HLS file with content-type: {}", content_type);
-
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(header::CACHE_CONTROL, "no-cache")
+        // 播放列表必须不缓存（直播 m3u8 持续更新），分片可短缓存避免重复请求。
+        .header(
+            header::CACHE_CONTROL,
+            if filename.ends_with(".m3u8") {
+                "no-cache"
+            } else {
+                "public, max-age=60"
+            },
+        )
         .body(Body::from(content))
         .map_err(|e| internal_error(anyhow::anyhow!("构建响应失败: {}", e)))
 }

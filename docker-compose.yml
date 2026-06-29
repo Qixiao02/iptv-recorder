@@ -1,9 +1,22 @@
+# IPTV Recorder —— 单镜像部署编排
+#
+# 架构:前端构建产物已打包进后端镜像(见 Dockerfile),单容器同时提供
+#      React Web UI + REST API + WebSocket,统一监听 :3000(宿主映射 :3033)。
+#      无需单独的前端容器。
+#
+# 首次部署:
+#   1) bash scripts/generate-env.sh        # 生成 .env (JWT 密钥 + 初始密码, 必做)
+#   2) docker compose up -d --build
+#   3) 浏览器访问 http://localhost:3033
+
 services:
-  iptv-recorder-backend:
+  iptv-recorder:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: iptv-recorder-backend
+    # 也可直接用已构建/已导出的镜像,跳过本地构建:
+    # image: iptv-recorder:latest
+    container_name: iptv-recorder
     restart: unless-stopped
     # 密钥与初始密码从 .env 读取(首次运行前用 scripts/generate-env 生成)
     env_file:
@@ -33,17 +46,26 @@ services:
       #
       # 【Windows Docker Desktop】(需在 Settings→Resources→File Sharing 启用对应盘符):
       #   整盘挂载,左侧用 /<盘符>/ 形式(Docker Desktop 会自动映射到宿主盘符)
-      # 【Linux 宿主机】:
-      #   - /:/mnt/host             # 挂载整个根目录(可访问任意宿主路径,安全边界较低)
-      #   或按需:  - /home:/mnt/host/home
+      - /d:/mnt/host/d
+      - /c:/mnt/host/c
+      #
+      # 【Linux 宿主机】:把上面两行注释掉,改为下方之一:
+      #   - /:/mnt/host                  # 挂载整个根目录(可访问任意宿主路径,安全边界较低)
+      #   或按需按盘/目录挂载:
+      #   - /home:/mnt/host/home
+      #   - /mnt/nas:/mnt/host/nas       # 网络盘先在宿主机挂载,再映射进容器
       #
       # 挂载后,在 Web UI「设置 > 存储」点"选择目录",从 /mnt/host 开始浏览即可选到宿主机路径。
       # ──────────────────────────────────────────────────────────────
-      - /d:/mnt/host/d
-      - /c:/mnt/host/c
+    networks:
+      - iptv-net
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+
+networks:
+  iptv-net:
+    driver: bridge

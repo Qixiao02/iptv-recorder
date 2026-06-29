@@ -113,7 +113,7 @@ export const Layout: React.FC = () => {
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon">
-            <img src="/logo.png" alt="IPTV Recorder" />
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="IPTV Recorder" />
           </div>
           {!sidebarCollapsed && (
             <span className="logo-text">IPTV Recorder</span>

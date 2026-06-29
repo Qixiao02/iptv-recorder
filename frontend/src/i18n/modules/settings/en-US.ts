@@ -141,7 +141,7 @@ export default {
     subtitle: 'View all changes across IPTV Recorder releases',
   },
   about: {
-    version: 'Version 0.1.1',
+    version: 'Version 0.1.3',
     desc: 'Rust-based IPTV M3U management and scheduled recording system',
     website: 'Website',
     checkUpdate: 'Check Updates',

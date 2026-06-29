@@ -364,21 +364,9 @@ impl TranscodeService {
     /// 获取 HLS 文件路径
     #[allow(dead_code)]
     pub async fn get_hls_file(&self, session_id: &str, filename: &str) -> Option<PathBuf> {
-        info!(
-            "Looking for HLS file: session={}, filename={}",
-            session_id, filename
-        );
+        // 播放热路径，每个分片都会进来，日志降到 DEBUG 避免阻塞播放器。
         let sessions = self.sessions.read().await;
-        info!(
-            "Current sessions count: {}, keys: {:?}",
-            sessions.len(),
-            sessions.keys().collect::<Vec<_>>()
-        );
-        let result = sessions.get(session_id).map(|a| {
-            let path = a.session.hls_dir.join(filename);
-            info!("Found session, returning path: {:?}", path);
-            path
-        });
+        let result = sessions.get(session_id).map(|a| a.session.hls_dir.join(filename));
         if result.is_none() {
             warn!(
                 "HLS file not found for session {}, available sessions: {:?}",
@@ -496,29 +484,29 @@ fn spawn_ffmpeg(
         .ok_or_else(|| anyhow::anyhow!("路径含非 UTF-8 字符"))?;
 
     let mut command = Command::new(ffmpeg_path);
+    // 关键性能点：直播转码下，统计输出（frame=... speed=...x）每秒会刷出数十~上百行，
+    // 它们全部进入 stderr 的同步读取 + tracing，会拖慢分片写盘 → 播放器卡顿。
+    // 因此日志级别降到 warning（只保留真正的错误），并移除 stats_period 触发器。
     command.args([
         "-hide_banner",
         "-loglevel",
-        "info",
-        "-stats_period",
-        "2",
+        "warning",
         "-fflags",
         "+genpts+discardcorrupt+igndts",
         "-err_detect",
         "ignore_err",
-        "-reconnect",
-        "1",
-        "-reconnect_streamed",
-        "1",
-        "-reconnect_delay_max",
-        "2",
     ]);
 
+    // 输入探测与缓冲。IPTV 多播 / RTSP 是常驻流，FFmpeg 不会自己 EOF，
+    // 所以这里不做"HTTP 重连"——那组参数对 udp:// rtsp:// 完全无效，
+    // 只是干扰阅读。真正的输入鲁棒性来自 socket 缓冲 + 错误忽略。
     match profile {
         TranscodeProfile::FastRemux => {
             command.args([
                 "-thread_queue_size",
-                "512",
+                // 1080i/p TS 的码率可达 8Mbps+，原 512 易丢包花屏。
+                // 拉到 2048 给内核 socket 足够缓冲。
+                "2048",
                 "-analyzeduration",
                 "4M",
                 "-probesize",
@@ -528,7 +516,7 @@ fn spawn_ffmpeg(
         TranscodeProfile::StableFmp4 | TranscodeProfile::CompatibleMpegTs => {
             command.args([
                 "-thread_queue_size",
-                "1024",
+                "2048",
                 "-analyzeduration",
                 "10M",
                 "-probesize",
@@ -559,10 +547,16 @@ fn spawn_ffmpeg(
                 "0",
                 "-f",
                 "hls",
+                // copy 模式只能在关键帧切分片。IPTV GOP 常为 2~4s，
+                // 原 hls_time=2 会迫使 FFmpeg 在非 IDR 帧切，结果分片时长在 2/4/6s 间漂移，
+                // 触发 hls.js 的 maxBufferHole 与时间戳跳变 → 卡顿。
+                // 改成 6s：与典型 GOP 对齐，分片时长稳定。
                 "-hls_time",
-                "2",
+                "6",
+                // 原 list_size=8 在直播下窗口只有 ~16s，播放器追得很紧，
+                // 任何后端抖动都会立刻显现。放宽到 15（~90s 窗口）。
                 "-hls_list_size",
-                "8",
+                "15",
                 "-hls_flags",
                 "delete_segments+append_list+temp_file",
                 "-hls_segment_type",
