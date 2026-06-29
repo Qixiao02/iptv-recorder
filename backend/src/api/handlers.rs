@@ -117,6 +117,20 @@ pub async fn list_channels(
     }
 }
 
+/// 获取全部频道(不分页)
+///
+/// 供前端下拉选择器(如新建计划选频道、Dashboard 统计、任务页)使用。
+/// 与分页接口 `/api/channels` 区分:分页接口的 page_size 上限为 100(防止
+/// 单次查询过大),当下拉需要展示全部频道(可能数百个)时,分页接口会截断,
+/// 导致部分频道搜不到。此接口直接返回全部频道,无截断。
+pub async fn list_all_channels(
+    State((db, _scheduler, _process_manager, config)): State<AppState>,
+) -> Result<Json<Vec<Channel>>, (StatusCode, Json<ErrorResponse>)> {
+    let ctx = ServiceContext::new(db, config);
+    let service = ChannelService::new(ctx);
+    service.list().await.map(Json).map_err(internal_error)
+}
+
 pub async fn create_channel(
     Extension(claims): Extension<Claims>,
     State((db, _scheduler, _process_manager, config)): State<AppState>,
