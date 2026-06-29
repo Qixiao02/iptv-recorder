@@ -10,8 +10,8 @@ import type { Channel } from '@/types';
 /**
  * 播放核心逻辑（HLS / UDP 转码 / 错误恢复 / token 鉴权）。
  *
- * 从 PlayerModal 抽出，供 PlayerModal（大窗）和 MiniPlayer（悬浮小窗）共享，
- * 避免播放逻辑重复实现。外壳层只负责渲染，播放细节全部在此 hook 内。
+ * 供 MiniPlayer（统一播放器，大窗/小窗两种模式）使用。外壳层只负责渲染，
+ * 播放细节全部在此 hook 内。
  *
  * 用法：
  *   const { videoRef, error, loading, transcoding, recordingActive, hlsUrlRef } =
@@ -19,7 +19,7 @@ import type { Channel } from '@/types';
  *   // active=false 时不启动播放（用于组件未挂载/未打开时）
  */
 
-// ===== API URL 解析（与原 PlayerModal 一致）=====
+// ===== API URL 解析 =====
 const buildApiPath = (path: string): string => {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;

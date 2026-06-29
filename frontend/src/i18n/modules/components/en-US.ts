@@ -197,6 +197,9 @@ export default {
     transcodeStartFailed: 'Failed to start transcoding. Make sure FFmpeg is installed on the server.',
     formatUnsupported: 'Video format is unsupported or failed to load',
     recordOnly: 'This channel is set to recording-only and does not provide online preview.',
+    minimize: 'Minimize to floating mini player',
+    restore: 'Restore to large player',
+    dragHint: 'Drag to move',
   },
   errorBoundary: {
     title: 'Page Error',

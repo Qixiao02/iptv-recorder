@@ -1,32 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, PictureInPicture2, AlertCircle, Loader2, Copy } from 'lucide-react';
+import {
+  X,
+  PictureInPicture2,
+  AlertCircle,
+  Loader2,
+  Copy,
+  Minimize2,
+  Maximize2,
+} from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { getStoredAuthToken } from '@/stores/authStore';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { usePlayerCore } from './usePlayerCore';
+import { useDraggable } from '@/hooks/useDraggable';
+import { useResizable } from '@/hooks/useResizable';
 import './PlayerModal.css';
 
 /**
- * 悬浮迷你播放器：固定在屏幕右下角，不遮挡背景页面。
+ * 统一播放器：大窗(large)↔ 小窗(mini)两种模式，由 playerStore.mode 驱动。
  *
- * 与 PlayerModal（全屏大窗）共享 usePlayerCore 播放逻辑，仅外壳不同。
- * 通过 playerStore 全局状态驱动，跨路由保持播放（切到任务页/设置页小窗仍在）。
+ * 关键架构：大窗和小窗是【同一个组件的两种 CSS 表现】，共用同一个
+ * <video ref={videoRef}> 节点。切换大小窗时 video 节点不变 → 视频流不中断。
+ * (若用条件渲染两个组件，各自一个 video，切换时会销毁重建导致重连流)
  *
- * 设计要点：
- * - 没有 overlay 遮罩：背后页面完全可点击、可操作。
- * - position: fixed 右下角，z-index 高于内容但低于 modal（900 < 1100）。
- * - 鼠标悬停显示控制条（标题/复制/PiP/关闭），移开隐藏以节省空间。
- * - 一次只播一个频道（playerStore.channel 单值）。
+ * 交互(YouTube/B 站式)：
+ * - 点"播放" → 默认大窗(mode='large')
+ * - 大窗"最小化" → 缩为右下角小窗(mode='mini')，流不中断
+ * - 小窗：可拖拽(标题栏)、可 resize(右下角)、「还原」回大窗
+ * - 小窗位置/大小 localStorage 记忆
  */
 export const MiniPlayer: React.FC = () => {
   const { t } = useTranslation(['components']);
   useI18nNamespace('components');
   const channel = usePlayerStore((s) => s.channel);
+  const mode = usePlayerStore((s) => s.mode);
+  const position = usePlayerStore((s) => s.position);
+  const size = usePlayerStore((s) => s.size);
   const closePlayer = usePlayerStore((s) => s.closePlayer);
+  const minimize = usePlayerStore((s) => s.minimize);
+  const restore = usePlayerStore((s) => s.restore);
+  const setPosition = usePlayerStore((s) => s.setPosition);
+  const setSize = usePlayerStore((s) => s.setSize);
   const [hovered, setHovered] = useState(false);
 
+  // 小窗元素 ref，供拖拽/resize 读取尺寸
+  const miniRef = useRef<HTMLDivElement>(null);
+
+  // active 只看 channel 是否存在，不看 mode——大小窗都保持播放
   const {
     videoRef,
     hlsUrlRef,
@@ -39,7 +61,29 @@ export const MiniPlayer: React.FC = () => {
     cleanupTranscode,
   } = usePlayerCore({ channel, active: !!channel });
 
-  if (!channel) return null;
+  // ===== 拖拽(仅小窗启用) =====
+  const getSize = useCallback(
+    () => {
+      const el = miniRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        return { width: r.width, height: r.height };
+      }
+      // 16:9 估算
+      return { width: size.width, height: (size.width * 9) / 16 };
+    },
+    [size.width],
+  );
+  const { onDragStart } = useDraggable(setPosition, getSize, mode === 'mini');
+
+  // ===== resize(仅小窗启用) =====
+  const { onResizeStart } = useResizable(
+    (width) => setSize({ width }),
+    { minWidth: 240, maxWidth: 720 },
+    mode === 'mini',
+  );
+
+  if (!channel || !mode) return null;
 
   const { name: channelName, url: channelUrl, source_visibility } = channel;
 
@@ -86,9 +130,136 @@ export const MiniPlayer: React.FC = () => {
     });
   };
 
+  // ===== 小窗样式：位置 + 尺寸 =====
+  // position 为 null(默认)时用右下角定位
+  const miniStyle: React.CSSProperties = position
+    ? {
+        left: position.x,
+        top: position.y,
+        width: size.width,
+        height: (size.width * 9) / 16,
+        right: 'auto',
+        bottom: 'auto',
+      }
+    : {
+        width: size.width,
+        height: (size.width * 9) / 16,
+      };
+
+  // 公共操作按钮(复制/PiP)，大小窗都用
+  const renderCommonActions = () => (
+    <>
+      <button
+        className="player-action-btn"
+        onClick={handleCopyUrl}
+        title={t('components:player.copyTitle')}
+        aria-label={t('components:player.copyTitle')}
+      >
+        <Copy size={14} />
+      </button>
+      <button
+        className="player-action-btn"
+        onClick={handleTogglePiP}
+        title={t('components:player.pipTitle')}
+        aria-label={t('components:player.pipTitle')}
+      >
+        <PictureInPicture2 size={14} />
+      </button>
+    </>
+  );
+
+  // ============ 大窗模式 ============
+  if (mode === 'large') {
+    return (
+      <div className="player-modal-overlay" onClick={handleClose}>
+        <div className="player-modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="player-modal-header">
+            <h2>{channelName}</h2>
+            <div className="player-modal-actions">
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleCopyUrl}
+                title={t('components:player.copyTitle')}
+              >
+                {t('components:player.copyAddress')}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleTogglePiP}
+                title={t('components:player.pipTitle')}
+                aria-label={t('components:player.pipTitle')}
+              >
+                <PictureInPicture2 size={16} />
+              </button>
+              {/* 最小化为悬浮小窗(流不中断) */}
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => minimize()}
+                title={t('components:player.minimize')}
+                aria-label={t('components:player.minimize')}
+              >
+                <Minimize2 size={16} />
+              </button>
+              <button className="modal-close" onClick={handleClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="player-modal-body">
+            <div className="player-video-container">
+              {source_visibility === 'private_server_only' && !error && (
+                <div className="player-warning-banner">
+                  {t('components:player.privateRelayWarning')}
+                </div>
+              )}
+              {recordingActive && !error && (
+                <div className="player-warning-banner player-warning-banner-secondary">
+                  {t('components:player.recordingActiveWarning')}
+                </div>
+              )}
+              {(loading || transcoding) && !error && (
+                <div className="player-loading">
+                  <Loader2 size={48} className="animate-spin" />
+                  <span>{transcoding ? t('components:player.transcoding') : t('components:player.loading')}</span>
+                </div>
+              )}
+              {error && (
+                <div className="player-error">
+                  <AlertCircle size={48} />
+                  <span className="error-message">{error}</span>
+                  <button className="btn btn-primary btn-sm" onClick={retry}>
+                    {t('components:player.retry')}
+                  </button>
+                </div>
+              )}
+              {/* 同一个 video 节点：大窗/小窗切换时不变，流不中断 */}
+              <video
+                ref={videoRef}
+                className="player-video"
+                controls
+                autoPlay
+                muted
+                playsInline
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: error ? 'none' : 'block' }}
+              />
+            </div>
+            <div className="player-url">
+              <span>{t('components:player.streamUrl')}</span>
+              <code>{channelUrl}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============ 小窗模式 ============
   return (
     <div
+      ref={miniRef}
       className="mini-player"
+      style={miniStyle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -121,23 +292,42 @@ export const MiniPlayer: React.FC = () => {
         </div>
       )}
 
-      {/* 悬停控制条：标题 + 操作按钮 */}
-      <div className={`mini-player-bar ${hovered || error ? 'visible' : ''}`}>
+      {/* 顶部拖拽把手 + 控制条(悬停显示) */}
+      <div
+        className={`mini-player-bar ${hovered || error ? 'visible' : ''}`}
+        onMouseDown={onDragStart}
+        title={t('components:player.dragHint', { defaultValue: '拖动移动' })}
+      >
         <span className="mini-player-title" title={channelName}>{channelName}</span>
-        <div className="mini-player-actions">
-          <button className="mini-player-btn" onClick={handleCopyUrl} title={t('components:player.copyTitle')} aria-label={t('components:player.copyTitle')}>
-            <Copy size={14} />
+        <div className="mini-player-actions" onMouseDown={(e) => e.stopPropagation()}>
+          {renderCommonActions()}
+          {/* 还原为大窗 */}
+          <button
+            className="player-action-btn"
+            onClick={() => restore()}
+            title={t('components:player.restore')}
+            aria-label={t('components:player.restore')}
+          >
+            <Maximize2 size={14} />
           </button>
-          <button className="mini-player-btn" onClick={handleTogglePiP} title={t('components:player.pipTitle')} aria-label={t('components:player.pipTitle')}>
-            <PictureInPicture2 size={14} />
-          </button>
-          <button className="mini-player-btn close" onClick={handleClose} title={t('common:close', { defaultValue: '关闭' })} aria-label={t('common:close', { defaultValue: '关闭' })}>
+          <button
+            className="player-action-btn close"
+            onClick={handleClose}
+            title={t('common:close', { defaultValue: '关闭' })}
+            aria-label={t('common:close', { defaultValue: '关闭' })}
+          >
             <X size={14} />
           </button>
         </div>
       </div>
 
-      {/* 录制中提示（不阻断，仅角落标记） */}
+      {/* 右下角 resize 把手 */}
+      <div
+        className="mini-player-resize-handle"
+        onMouseDown={onResizeStart}
+      />
+
+      {/* 录制中提示 */}
       {recordingActive && !error && (
         <div className="mini-player-recording-dot" title={t('components:player.recordingActiveWarning')} />
       )}

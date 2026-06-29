@@ -255,17 +255,18 @@
   position: fixed;
   right: 24px;
   bottom: 24px;
-  width: 320px;
-  /* 16:9 宽高比 + 顶部控制条空间 */
-  height: calc(320px * 9 / 16);
+  /* width/height/left/top 由内联 style 控制（支持拖拽位置 + resize 尺寸），
+     仅保留默认 fallback：当未拖动时（position=null）走右下角默认定位 */
   background: #000;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
   z-index: 900;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  /* 允许拖动手势（暂未实现拖动，预留） */
+  /* 拖拽/resize 期间禁用文本选中 */
   user-select: none;
+  /* 切换大小窗时的平滑过渡 */
+  transition: box-shadow 0.2s ease;
 }
 
 .mini-player-video {
@@ -352,6 +353,8 @@
   opacity: 0;
   transition: opacity 0.2s ease;
   pointer-events: none;
+  /* 拖拽把手：整个顶部 bar 可拖动移动小窗 */
+  cursor: move;
 }
 
 .mini-player-bar.visible {
@@ -373,6 +376,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* 阻止按钮区域的 mousedown 冒泡到拖拽把手，避免点按钮时误触发拖动 */
 }
 
 .mini-player-btn {
@@ -397,7 +401,55 @@
   background: rgba(239, 68, 68, 0.7);
 }
 
-/* 录制中标记（右上角红点） */
+/* 操作按钮（与 .mini-player-btn 统一风格，大小窗共用） */
+.player-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.15s ease;
+}
+
+.player-action-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.player-action-btn.close:hover {
+  background: rgba(239, 68, 68, 0.7);
+}
+
+/* 右下角 resize 把手：拖动改变小窗宽度（高度按 16:9 联动） */
+.mini-player-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 6;
+  /* 用斜线条纹让把手可识别 */
+  background:
+    linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.5) 50%);
+  background-size: 8px 8px;
+  background-position: bottom right;
+  background-repeat: no-repeat;
+  border-bottom-right-radius: 12px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.mini-player:hover .mini-player-resize-handle,
+.mini-player-resize-handle:active {
+  opacity: 0.9;
+}
+
+/* 录制中标记（右上角红点）—— 移到左上角，避免与顶部控制条按钮冲突 */
 .mini-player-recording-dot {
   position: absolute;
   top: 8px;
@@ -417,11 +469,9 @@
   100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
-/* 响应式：移动端缩小 */
+/* 响应式：移动端——小窗尺寸由 resize/默认值控制，这里只调边距 */
 @media (max-width: 768px) {
   .mini-player {
-    width: 240px;
-    height: calc(240px * 9 / 16);
     right: 12px;
     bottom: 12px;
     border-radius: 10px;
