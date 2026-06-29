@@ -141,7 +141,8 @@ export default {
     subtitle: '查看 IPTV Recorder 历史版本的所有改动记录',
   },
   about: {
-    version: '版本 0.1.3',
+    // 版本号从 package.json 读取(Settings 页注入),不再写死,避免与实际版本漂移
+    version: '版本 {{version}}',
     desc: '基于 Rust 的 IPTV M3U 管理与定时录制系统',
     website: '官方网站',
     checkUpdate: '检查更新',

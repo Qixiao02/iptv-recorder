@@ -26,6 +26,8 @@ import Markdown from '@/components/Markdown';
 import readmeContent from '@/about-readme.md?raw';
 // 以纯文本导入 CHANGELOG(构建前由 predev/prebuild 脚本从项目根同步到 src/changelog.md)
 import changelogContent from '@/changelog.md?raw';
+// 版本号单一数据源:从 package.json 读取(构建期注入),避免与 i18n 写死值漂移
+import pkg from '../../../package.json';
 import {
   Settings,
   Database,
@@ -826,7 +828,7 @@ export const SettingsPage: React.FC = () => {
               </div>
               <div className="about-info">
                 <h3>IPTV Recorder</h3>
-                <p className="version">{t('settings:about.version')}</p>
+                <p className="version">{t('settings:about.version', { version: pkg.version })}</p>
                 <p className="description">{t('settings:about.desc')}</p>
               </div>
             </div>
