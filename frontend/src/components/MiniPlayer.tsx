@@ -37,7 +37,7 @@ export const MiniPlayer: React.FC = () => {
     retry,
     cleanupHls,
     cleanupTranscode,
-  } = usePlayerCore({ channel: channel!, active: !!channel });
+  } = usePlayerCore({ channel, active: !!channel });
 
   if (!channel) return null;
 

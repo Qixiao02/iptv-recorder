@@ -63,7 +63,8 @@ const buildApiUrl = (path: string): string => {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface UsePlayerCoreArgs {
-  channel: Channel;
+  /** 当前播放频道；可为 null（小窗未打开时）。null 时 active 应为 false，hook 不启动播放。 */
+  channel: Channel | null;
   /** 是否激活播放。false 时不启动（组件未挂载/未打开）。 */
   active: boolean;
 }
@@ -71,7 +72,14 @@ interface UsePlayerCoreArgs {
 export function usePlayerCore({ channel, active }: UsePlayerCoreArgs) {
   const { t } = useTranslation(['components']);
   useI18nNamespace('components');
-  const { id: channelId, url: channelUrl, source_visibility, playback_strategy } = channel;
+  // channel 可能为 null（小窗未打开时 hook 仍会被调用，React 要求 hook 无条件执行）。
+  // 用安全解构：channel 为 null 时取默认空值，配合 active=false 使所有 effect 不启动。
+  const {
+    id: channelId = '',
+    url: channelUrl = '',
+    source_visibility = 'public',
+    playback_strategy = 'auto',
+  } = channel ?? ({} as Partial<Channel>);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
