@@ -1,3 +1,25 @@
+# ── Stage 1: 前端构建 ──────────────────────────────────────────
+# 产物 dist 由后端 ServeDir::new("static") 在 /static 路径下服务
+FROM node:20-alpine AS frontend
+
+WORKDIR /build
+
+# 国内 npm 镜像加速;pnpm 10 兼容 Node 20(pnpm 11 需 Node 22.5+)
+RUN npm config set registry https://registry.npmmirror.com \
+    && corepack enable \
+    && corepack prepare pnpm@10.18.0 --activate
+
+# 先 COPY 锁文件以利用 Docker 层缓存
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY frontend/ .
+RUN pnpm build
+# 产物在 /build/dist (index.html + assets/ + logo.png + vite.svg)
+
+
+# ── Stage 2: 后端(Rust)构建 ───────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /build
@@ -48,6 +70,9 @@ WORKDIR /app
 
 COPY --from=builder /tmp/iptv-recorder /app/iptv-recorder
 COPY backend/config/default.toml /app/config/default.toml
+
+# 前端构建产物:后端工作目录为 /app,ServeDir::new("static") 解析为 /app/static
+COPY --from=frontend /build/dist /app/static
 
 RUN mkdir -p /app/data/recordings /app/data/.tmp \
     && addgroup -S app && adduser -S -G app app \

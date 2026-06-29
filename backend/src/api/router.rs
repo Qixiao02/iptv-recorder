@@ -40,7 +40,7 @@ use crate::api::handlers::{
     import_epg_source,
     import_m3u_content,
     import_m3u_url,
-    index_handler,
+    spa_index_handler,
     list_audit_logs,
     // 频道相关
     list_channels,
@@ -97,8 +97,6 @@ pub async fn create_router(
 
     // 公开路由（不需要认证）
     let public_routes = Router::new()
-        // 首页
-        .route("/", get(index_handler))
         // 登录
         .route("/api/auth/login", post(login))
         // 流代理（播放器通过 token 参数鉴权）
@@ -200,8 +198,13 @@ pub async fn create_router(
         .merge(authenticated_routes)
         .merge(operator_routes)
         .merge(admin_routes)
-        // 静态文件服务
+        // 静态文件服务（前端构建产物 /static/assets/*、/static/logo.png 等,
+        // 由 vite base: '/static/' 决定的资源路径）
         .nest_service("/static", ServeDir::new("static"))
+        // SPA 兜底:除已注册的具名路由(/api/*、/static/* 等)外,
+        // 其余路径一律返回 index.html,交由 react-router 在前端处理 history 路由。
+        // 这样刷新 /channels、/tasks 等子路由不会 404。
+        .fallback(spa_index_handler)
         // 中间件
         .layer(Extension(transcode_service))
         .layer(Extension(event_bus))

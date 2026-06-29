@@ -60,30 +60,33 @@ async fn record_audit(
     }
 }
 
-/// 首页处理器
-pub async fn index_handler() -> &'static str {
-    r#"
-    __  __            ____      _ _____           _
-    |  \/  |          / __ \    | |  __ \         | |
-    | \  / | ___ _ __| |  | | __| | |__) |_ _  ___| | _____
-    | |\/| |/ _ \ '__| |  | |/ _` |  ___/ _` |/ __| |/ / __|
-    | |  | |  __/ |  | |__| | (_| | |   | (_| | (__|   <\ \ \
-    |_|  |_|\___|_|   \____/ \__,_|_|    \__,_|\___|_|\_\___/
-
-    IPTV M3U Management & Recording System
-
-    API Endpoints:
-    - GET    /api/channels              - List all channels
-    - POST   /api/channels              - Create channel
-    - POST   /api/channels/import/url   - Import from URL
-    - GET    /api/schedules             - List all schedules
-    - POST   /api/schedules             - Create schedule
-    - GET    /api/tasks                 - List all tasks
-    - POST   /api/tasks/manual          - Start manual recording
-    - GET    /api/scheduler/upcoming    - Get upcoming tasks
-    - POST   /api/scheduler/reload      - Reload scheduler
-    - WS     /ws                        - WebSocket connection
-    "#
+/// SPA 首页处理器
+///
+/// 读取前端构建产物 `static/index.html` 返回。
+/// 作为路由树的 `fallback` 使用:除 `/api/*`、`/static/*` 等具名路由外,
+/// 任意前端路由(如 `/channels`、`/tasks`)刷新时都回退到此,
+/// 由 react-router 在客户端接管路由,实现 SPA history 模式。
+pub async fn spa_index_handler() -> Response {
+    match tokio::fs::read("static/index.html").await {
+        Ok(body) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(Body::from(body))
+            .unwrap(),
+        Err(e) => {
+            // static 目录缺失通常意味着:前端未构建,或镜像构建阶段未 COPY dist。
+            warn!("SPA 入口缺失 static/index.html: {}", e);
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(Body::from(
+                    "Frontend build not found. \
+                     Run `pnpm build` in frontend/ and ensure the Dockerfile \
+                     copies `dist` into `static/`.",
+                ))
+                .unwrap()
+        }
+    }
 }
 
 // ===== 频道处理器 =====
