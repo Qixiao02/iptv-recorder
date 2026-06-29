@@ -89,26 +89,103 @@
   background: #000;
 }
 
-.player-warning-banner {
+/* 信息提示 badge:右上角小图标,悬停弹出 tooltip,不持续遮挡视频。
+   替代旧的占满顶部的 .player-warning-banner 横幅。 */
+.player-info-badges,
+.mini-player-badges {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(245, 158, 11, 0.16);
-  border: 1px solid rgba(245, 158, 11, 0.32);
-  color: #fcd34d;
-  font-size: 12px;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
   z-index: 12;
-  backdrop-filter: blur(6px);
+  pointer-events: auto;
 }
 
-.player-warning-banner-secondary {
-  top: 56px;
-  background: rgba(14, 165, 233, 0.16);
-  border-color: rgba(14, 165, 233, 0.32);
+.player-info-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  cursor: help;
+  transition: background 0.15s ease;
+}
+
+.player-info-badge-mini {
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+}
+
+.player-info-badge-warn {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fcd34d;
+}
+
+.player-info-badge-recording {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: rgba(14, 165, 233, 0.45);
   color: #bae6fd;
+}
+
+.player-info-badge-rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
+  animation: player-info-rec-pulse 1.6s infinite;
+}
+
+.player-info-badge-mini .player-info-badge-rec-dot {
+  width: 6px;
+  height: 6px;
+}
+
+@keyframes player-info-rec-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+  70% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* 悬停/聚焦时弹出完整说明 tooltip */
+.player-info-badge-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
+
+.player-info-badge:hover .player-info-badge-tip,
+.player-info-badge:focus-visible .player-info-badge-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
 }
 
 /* Video Player */
@@ -449,25 +526,6 @@
   opacity: 0.9;
 }
 
-/* 录制中标记（右上角红点）—— 移到左上角，避免与顶部控制条按钮冲突 */
-.mini-player-recording-dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
-  animation: mini-player-rec-pulse 1.6s infinite;
-  z-index: 5;
-}
-
-@keyframes mini-player-rec-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
-  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-}
 
 /* 响应式：移动端——小窗尺寸由 resize/默认值控制，这里只调边距 */
 @media (max-width: 768px) {

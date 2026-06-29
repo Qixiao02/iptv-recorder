@@ -43,6 +43,7 @@ use crate::api::handlers::{
     spa_index_handler,
     list_audit_logs,
     // 频道相关
+    list_all_channels,
     list_channels,
     list_epg_programs,
     // EPG 相关
@@ -118,6 +119,8 @@ pub async fn create_router(
         .route("/api/auth/profile", post(update_profile))
         // ===== 频道 API =====
         .route("/api/channels", get(list_channels))
+        // /all 必须在 /{id} 之前注册(axum 静态路径优先,但仍按声明顺序更清晰)
+        .route("/api/channels/all", get(list_all_channels))
         .route("/api/channels/{id}", get(get_channel))
         .route("/api/channels/{id}/test", post(test_channel))
         .route("/api/channels/groups", get(list_groups))

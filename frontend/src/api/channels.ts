@@ -76,8 +76,10 @@ export const getChannels = (params?: PaginationParams): Promise<PaginatedRespons
 };
 
 // 获取全部频道（不分页，用于下拉选择等场景）
+// 用专门的 /channels/all 接口,而非分页接口 page_size=1000——
+// 分页接口后端 clamp page_size 到 100,超过 100 个频道会被截断。
 export const getAllChannels = (): Promise<Channel[]> => {
-  return apiClient.get('/channels?page_size=1000').then((res) => res.data.items);
+  return apiClient.get('/channels/all').then((res) => res.data);
 };
 
 // 获取单个频道

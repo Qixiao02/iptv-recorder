@@ -172,32 +172,43 @@ export function usePlayerCore({ channel, active }: UsePlayerCoreArgs) {
     onFatal: (message: string) => void,
   ) => {
     hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
+      // ===== 非致命错误：记录后交由 hls.js 内部重试机制处理 =====
+      // 这包括单个分片加载失败的初次重试(fragLoadingMaxRetry=10)。
       if (!data.fatal) {
         return;
       }
 
-      console.error('HLS Error:', data);
+      console.error('HLS fatal Error:', data);
 
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        if (recoveryAttemptRef.current.media < 2) {
+        if (recoveryAttemptRef.current.media < 3) {
           recoveryAttemptRef.current.media += 1;
-          console.warn(`Recovering media error (${recoveryAttemptRef.current.media}/2)...`);
+          console.warn(`Recovering media error (${recoveryAttemptRef.current.media}/3)...`);
           hls.recoverMediaError();
           return;
         }
       }
 
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        if (recoveryAttemptRef.current.network < 2) {
+        // 直播流在网络错误(包括上游网关重置期间的分片 404/超时)时，
+        // 用 startLoad 从当前播放位置恢复，而不是 reloadSource 从头开始。
+        // 后端 ffmpeg 配了 reconnect 会自动重连产出新分片，这里只要继续推进即可。
+        // 给一个较大的重试上限，因为 UDP-over-HTTP 网关可能周期性重置。
+        if (recoveryAttemptRef.current.network < 5) {
           recoveryAttemptRef.current.network += 1;
-          console.warn(`Recovering network error (${recoveryAttemptRef.current.network}/2)...`);
-          hls.stopLoad();
-          setTimeout(() => {
-            hls.loadSource(sourceUrl);
-            hls.startLoad();
-          }, 500);
+          console.warn(`Recovering network error (${recoveryAttemptRef.current.network}/5), resuming load...`);
+          hls.startLoad();
           return;
         }
+        // 超过上限才回退到完整重载(清理状态重来)。
+        console.warn('Network recovery exhausted, doing full reload...');
+        recoveryAttemptRef.current.network = 0;
+        hls.stopLoad();
+        setTimeout(() => {
+          hls.loadSource(sourceUrl);
+          hls.startLoad();
+        }, 500);
+        return;
       }
 
       onFatal(t('components:player.playFailed', { type: data.type, details: data.details }));
@@ -336,24 +347,34 @@ export function usePlayerCore({ channel, active }: UsePlayerCoreArgs) {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          maxBufferLength: 45,
-          maxMaxBufferLength: 90,
-          maxBufferSize: 80 * 1000 * 1000,
-          maxBufferHole: 0.8,
+          // 边看边转码场景:后端写分片有抖动,前端要多囤缓冲 + 放宽时间戳容差,
+          // 避免一点点抖动就转圈。尤其 UDP-over-HTTP 网关会周期性重置连接,
+          // 中断期间会产生 0 字节分片,需要播放器有足够缓冲吸收。
+          maxBufferLength: 60,
+          maxMaxBufferLength: 120,
+          maxBufferSize: 120 * 1000 * 1000,
+          // copy/remux 分片时长会在 GOP 边界漂移(2~6s),
+          // 0.8s 容差太严会反复触发缓冲缺口判定。放宽到 2s。
+          maxBufferHole: 2.0,
           liveDurationInfinity: true,
           backBufferLength: 30,
           liveBackBufferLength: 30,
           startLevel: -1,
           autoStartLoad: true,
-          liveSyncDurationCount: 4,
-          liveMaxLatencyDurationCount: 12,
+          // 落后直播边缘 6 个分片(~36s @6s 分片),给后端重连足够容错空间。
+          liveSyncDurationCount: 6,
+          liveMaxLatencyDurationCount: 15,
           startFragPrefetch: true,
           manifestLoadingTimeOut: 10000,
           manifestLoadingMaxRetry: 6,
           levelLoadingTimeOut: 10000,
           levelLoadingMaxRetry: 6,
           fragLoadingTimeOut: 20000,
-          fragLoadingMaxRetry: 6,
+          // 分片加载失败重试次数提高:网关重置期间会有几个坏分片,
+          // 多重试几次能跳过中断窗口,避免直接判 fatal 卡死。
+          fragLoadingMaxRetry: 10,
+          // 坏分片重试之间的间隔,给后端 ffmpeg 重连留时间。
+          fragLoadingRetryDelay: 1000,
         });
 
         hls.loadSource(hlsUrl);
@@ -417,11 +438,14 @@ export function usePlayerCore({ channel, active }: UsePlayerCoreArgs) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferHole: 0.8,
-        liveSyncDurationCount: 4,
+        maxBufferLength: 40,
+        maxMaxBufferLength: 90,
+        // 直连源同样存在 remux 漂移与网关重置,放宽容差。
+        maxBufferHole: 2.0,
+        liveSyncDurationCount: 5,
         liveMaxLatencyDurationCount: 12,
+        fragLoadingMaxRetry: 10,
+        fragLoadingRetryDelay: 1000,
       });
 
       hls.loadSource(proxyUrl);

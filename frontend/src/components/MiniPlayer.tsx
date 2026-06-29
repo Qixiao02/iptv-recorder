@@ -8,6 +8,7 @@ import {
   Copy,
   Minimize2,
   Maximize2,
+  Radio,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { getStoredAuthToken } from '@/stores/authStore';
@@ -207,14 +208,31 @@ export const MiniPlayer: React.FC = () => {
           </div>
           <div className="player-modal-body">
             <div className="player-video-container">
-              {source_visibility === 'private_server_only' && !error && (
-                <div className="player-warning-banner">
-                  {t('components:player.privateRelayWarning')}
-                </div>
-              )}
-              {recordingActive && !error && (
-                <div className="player-warning-banner player-warning-banner-secondary">
-                  {t('components:player.recordingActiveWarning')}
+              {/* 信息提示:收成右上角小图标 badge,悬停看详情,不持续遮挡视频 */}
+              {(source_visibility === 'private_server_only' || recordingActive) && !error && (
+                <div className="player-info-badges">
+                  {source_visibility === 'private_server_only' && (
+                    <span
+                      className="player-info-badge player-info-badge-warn"
+                      role="img"
+                      tabIndex={0}
+                      aria-label={t('components:player.privateRelayWarning')}
+                    >
+                      <Radio size={13} />
+                      <span className="player-info-badge-tip">{t('components:player.privateRelayWarning')}</span>
+                    </span>
+                  )}
+                  {recordingActive && (
+                    <span
+                      className="player-info-badge player-info-badge-recording"
+                      role="img"
+                      tabIndex={0}
+                      aria-label={t('components:player.recordingActiveWarning')}
+                    >
+                      <span className="player-info-badge-rec-dot" />
+                      <span className="player-info-badge-tip">{t('components:player.recordingActiveWarning')}</span>
+                    </span>
+                  )}
                 </div>
               )}
               {(loading || transcoding) && !error && (
@@ -327,9 +345,32 @@ export const MiniPlayer: React.FC = () => {
         onMouseDown={onResizeStart}
       />
 
-      {/* 录制中提示 */}
-      {recordingActive && !error && (
-        <div className="mini-player-recording-dot" title={t('components:player.recordingActiveWarning')} />
+      {/* 信息提示:右上角小图标 badge,悬停看详情(小窗空间小,用极简样式) */}
+      {(source_visibility === 'private_server_only' || recordingActive) && !error && (
+        <div className="mini-player-badges">
+          {source_visibility === 'private_server_only' && (
+            <span
+              className="player-info-badge player-info-badge-warn player-info-badge-mini"
+              role="img"
+              tabIndex={0}
+              aria-label={t('components:player.privateRelayWarning')}
+            >
+              <Radio size={11} />
+              <span className="player-info-badge-tip">{t('components:player.privateRelayWarning')}</span>
+            </span>
+          )}
+          {recordingActive && (
+            <span
+              className="player-info-badge player-info-badge-recording player-info-badge-mini"
+              role="img"
+              tabIndex={0}
+              aria-label={t('components:player.recordingActiveWarning')}
+            >
+              <span className="player-info-badge-rec-dot" />
+              <span className="player-info-badge-tip">{t('components:player.recordingActiveWarning')}</span>
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
