@@ -2,6 +2,24 @@
 
 本文件记录 IPTV Recorder 的所有显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.4] - 2026-06-29
+
+### ✨ 新功能
+- **播放器大窗/小窗切换**：点「播放」先出全屏大窗，大窗点「最小化」缩为右下角悬浮小窗（**视频流不中断**），小窗点「还原」回大窗，类似 YouTube/B 站的交互体验。小窗可**拖拽**移动位置、拖**右下角 resize** 改变大小，位置与大小用 localStorage 记忆，下次打开还在上次位置。
+- **版本号单一数据源**：关于页版本号改从 `package.json` 读取（构建期注入），不再写死在 i18n 文案里。根治了「三处版本号需手动同步、易漂移」的问题（v0.1.2 就曾因此漏改 i18n），今后发版只需改 `package.json` 一处。
+
+### 🛠 重构
+- **播放器架构统一**：大窗与小窗合并为同一个 `MiniPlayer` 组件的两种 CSS 表现，共用同一个 `<video>` 节点与 `usePlayerCore` 播放核心，切换模式时 DOM 不变、流不重连。`playerStore` 扩展为状态机（`channel` + `mode` + `position` + `size`），位置/大小持久化到 localStorage。
+- **拖拽/缩放手写实现**：新增 `useDraggable` / `useResizable` 两个 hook，纯手写 `mousedown/mousemove/mouseup` 监听 + 视口边界约束，零第三方依赖，与项目无拖拽库的现状保持一致。
+
+### 🐛 修复
+- **发版后静态资源 404**：之前 `index.html` 没有缓存头，浏览器启发式缓存导致发版后用户仍拿到旧 `index.html`，引用旧 hash 的 chunk 文件名 → 新容器里该文件已不存在 → 动态 import 失败报错（如 `ScheduleModal-xxx.js 404`）。现在按业界标准设缓存策略：带 hash 的 `/static/assets/*` 一年强缓存 + `immutable`，无 hash 文件（`index.html`、`logo.png`）`no-cache` 每次回源验证。发版后用户无需手动强刷。
+
+### 🔧 工程
+- 删除死代码 `PlayerModal.tsx`（已无任何引用，逻辑早已被 `usePlayerCore` + `MiniPlayer` 取代）；`PlayerModal.css` 保留供 `MiniPlayer` 共用。
+
+---
+
 ## [0.1.3] - 2026-06-29
 
 ### ✨ 新功能

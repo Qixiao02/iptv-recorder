@@ -197,6 +197,9 @@ export default {
     transcodeStartFailed: '转码启动失败，请确保服务器已安装 FFmpeg',
     formatUnsupported: '视频格式不支持或加载失败',
     recordOnly: '该频道当前设置为仅允许录制，不提供在线预览。',
+    minimize: '最小化为悬浮小窗',
+    restore: '还原为大窗',
+    dragHint: '按住拖动移动位置',
   },
   errorBoundary: {
     title: '页面发生错误',

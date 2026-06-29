@@ -141,7 +141,8 @@ export default {
     subtitle: 'View all changes across IPTV Recorder releases',
   },
   about: {
-    version: 'Version 0.1.3',
+    // Version number is read from package.json (injected in Settings page), not hardcoded.
+    version: 'Version {{version}}',
     desc: 'Rust-based IPTV M3U management and scheduled recording system',
     website: 'Website',
     checkUpdate: 'Check Updates',
