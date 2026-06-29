@@ -54,8 +54,11 @@ impl TranscodeProfile {
 
     fn startup_timeout(self) -> Duration {
         match self {
-            // 正常源应尽快起播，先走轻量 remux。
-            Self::FastRemux => Duration::from_secs(8),
+            // 组播/网关源的 FastRemux：等第一个 IDR 关键帧 + 切出第一个分片。
+            // 之前 8s 太短——IPTV GOP 常 2~6s，加上 ffmpeg 探测缓冲(probesize 4M),
+            // 8s 内多半切不出 3 个分片(需 ~18-24s),导致几乎必然超时降级到 30s 全编码。
+            // 放宽到 15s 配合 min_ready_segments=1,首帧一到就起播,多数情况不再降级。
+            Self::FastRemux => Duration::from_secs(15),
             // 对组播/网关源多给一些时间等待第一个可解码关键帧。
             Self::StableFmp4 => Duration::from_secs(30),
             Self::CompatibleMpegTs => Duration::from_secs(40),
@@ -80,7 +83,11 @@ impl TranscodeProfile {
 
     fn min_ready_segments(self) -> usize {
         match self {
-            Self::FastRemux => 3,
+            // FastRemux：首帧一到就起播(1 个分片足够)。
+            // 之前要求 3 个分片(~18-24s)配合 8s 超时几乎必然失败,每次都降级到
+            // 30s 的 StableFmp4 全编码。改为 1 个分片,hls.js 会自动追后续分片缓冲。
+            // 单个分片 6s(-hls_time 6)已足够首屏播放,不会 buffer 不足。
+            Self::FastRemux => 1,
             Self::StableFmp4 => 2,
             Self::CompatibleMpegTs => 2,
         }
