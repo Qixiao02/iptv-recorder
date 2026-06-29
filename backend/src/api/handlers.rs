@@ -71,6 +71,9 @@ pub async fn spa_index_handler() -> Response {
         Ok(body) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            // index.html 不强缓存:每次回源验证(304),
+            // 保证发版后浏览器立即拿到引用新 hash chunk 的新版 index.html。
+            .header(header::CACHE_CONTROL, "no-cache")
             .body(Body::from(body))
             .unwrap(),
         Err(e) => {

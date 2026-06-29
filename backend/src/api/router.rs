@@ -198,9 +198,34 @@ pub async fn create_router(
         .merge(authenticated_routes)
         .merge(operator_routes)
         .merge(admin_routes)
-        // 静态文件服务（前端构建产物 /static/assets/*、/static/logo.png 等,
-        // 由 vite base: '/static/' 决定的资源路径）
-        .nest_service("/static", ServeDir::new("static"))
+        // 静态文件服务（前端构建产物）
+        //
+        // 缓存策略(发版后用户不用手动强刷的关键):
+        // - /static/assets/* :vite 构建的带 hash 文件(JS/CSS,内容变文件名就变)
+        //   → 一年强缓存 + immutable,浏览器永不回源,极致性能。
+        // - /static/index.html、/static/logo.png 等(无 hash 文件)
+        //   → no-cache,每次回源验证(304),发版立即生效。
+        //
+        // 实现方式:ServeDir 不自带 layer 能力,用 Router 包一层并挂 SetResponseHeaderLayer。
+        // 注意两个 nest 的顺序:/static/assets 要在 /static 之前,否则会被后者吞掉。
+        .nest_service(
+            "/static/assets",
+            Router::new()
+                .nest_service("/", ServeDir::new("static/assets"))
+                .layer(SetResponseHeaderLayer::overriding(
+                    axum::http::header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                )),
+        )
+        .nest_service(
+            "/static",
+            Router::new()
+                .nest_service("/", ServeDir::new("static"))
+                .layer(SetResponseHeaderLayer::overriding(
+                    axum::http::header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                )),
+        )
         // SPA 兜底:除已注册的具名路由(/api/*、/static/* 等)外,
         // 其余路径一律返回 index.html,交由 react-router 在前端处理 history 路由。
         // 这样刷新 /channels、/tasks 等子路由不会 404。
