@@ -207,11 +207,15 @@ pub async fn create_router(
         //   → no-cache,每次回源验证(304),发版立即生效。
         //
         // 实现方式:ServeDir 不自带 layer 能力,用 Router 包一层并挂 SetResponseHeaderLayer。
-        // 注意两个 nest 的顺序:/static/assets 要在 /static 之前,否则会被后者吞掉。
+        // 注意:内部用 route_service("/") 而非 nest_service("/"),
+        // 因为 axum 0.8 禁止在根路径 nest(运行期 panic:
+        // "Nesting at the root is no longer supported")。
+        // 两个 nest_service 顺序:/static/assets 要在 /static 之前,否则会被后者吞掉。
         .nest_service(
             "/static/assets",
             Router::new()
-                .nest_service("/", ServeDir::new("static/assets"))
+                .route_service("/", ServeDir::new("static/assets"))
+                .fallback_service(ServeDir::new("static/assets"))
                 .layer(SetResponseHeaderLayer::overriding(
                     axum::http::header::CACHE_CONTROL,
                     HeaderValue::from_static("public, max-age=31536000, immutable"),
@@ -220,7 +224,8 @@ pub async fn create_router(
         .nest_service(
             "/static",
             Router::new()
-                .nest_service("/", ServeDir::new("static"))
+                .route_service("/", ServeDir::new("static"))
+                .fallback_service(ServeDir::new("static"))
                 .layer(SetResponseHeaderLayer::overriding(
                     axum::http::header::CACHE_CONTROL,
                     HeaderValue::from_static("no-cache"),

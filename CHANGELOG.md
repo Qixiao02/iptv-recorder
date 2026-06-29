@@ -2,7 +2,17 @@
 
 本文件记录 IPTV Recorder 的所有显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.5] - 2026-06-29
+
+### 🐛 修复
+- **紧急修复：v0.1.4 启动崩溃**。v0.1.4 的静态资源缓存头实现用了 `nest_service("/", ServeDir)` 给 ServeDir 包层挂缓存中间件，但 axum 0.8 禁止在根路径 nest，导致运行期 panic：`Nesting at the root is no longer supported. Use fallback_service instead.`。`cargo check` 不报错（编译期不检查路由冲突），只在容器实际启动时暴露，**v0.1.4 镜像无法启动（restart 循环）**。本版改用 `route_service("/") + fallback_service` 兜底子路径，恢复正常启动，同时保留缓存头功能。
+- 顺带记录教训：静态服务/路由改动必须在容器里实际启动验证，不能只靠 `cargo check`。
+
+---
+
 ## [0.1.4] - 2026-06-29
+
+> ⚠️ **此版本有启动崩溃 bug，已被 v0.1.5 取代。** 请勿使用 v0.1.4 镜像。
 
 ### ✨ 新功能
 - **播放器大窗/小窗切换**：点「播放」先出全屏大窗，大窗点「最小化」缩为右下角悬浮小窗（**视频流不中断**），小窗点「还原」回大窗，类似 YouTube/B 站的交互体验。小窗可**拖拽**移动位置、拖**右下角 resize** 改变大小，位置与大小用 localStorage 记忆，下次打开还在上次位置。
