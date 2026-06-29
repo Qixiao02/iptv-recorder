@@ -1,6 +1,6 @@
 [package]
 name = "iptv-recorder"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["IPTV Recorder Team"]
 description = "IPTV M3U management and scheduled recording system"
