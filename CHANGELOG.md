@@ -2,6 +2,29 @@
 
 本文件记录 IPTV Recorder 的所有显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-06-29
+
+### ✨ 新功能
+- **单镜像部署**：Dockerfile 新增前端构建阶段，前端构建产物打包进后端镜像，**前后端同源同端口**（访问 `:3033` 即得完整界面），告别「后端容器 + 前端开发容器」分离部署。容器名统一为 `iptv-recorder`，docker-compose 补显式 `iptv-net` 网络。
+- **品牌形象升级**：项目 logo 替换为新设计（蓝紫渐变 + 白色频道横条 + 红色录制圆点），原图 4096×4096/6.7MB 压缩到 1024×1024/554KB（lanczos 算法，锐利无失真）。
+- **登录页 logo 统一**：登录页由 lucide 场记板图标改为项目 `logo.png`，与侧边栏、关于页全站统一。
+
+### 🐛 修复
+- 修复悬浮迷你播放器未打开时，`usePlayerCore` 解构 `null` 导致页面崩溃的问题。
+
+### 🛠 重构
+- **SPA 路由改造**：后端新增 `spa_index_handler`，移除旧的 ASCII art 文本首页；路由改用 `.fallback` 实现 SPA history 模式，刷新任意前端路由（`/channels`、`/tasks` 等）不再 404。前端 vite `base` 设为 `/static/`，对齐后端 `ServeDir` 挂载路径。
+
+### 🚀 性能
+- **播放热路径日志降级**：边看边转码场景下，`get_hls_file`（每个分片被请求多次）的冗余 INFO 日志与 PathBuf 格式化会同步阻塞响应；ffmpeg 转码的 stats 输出（每秒数十~上百行）拖慢分片写盘。日志降级到 DEBUG（零开销）/warning，缓解播放卡顿。
+- **HLS 缓冲策略调优**：前端播放器多囤缓冲（`maxBufferLength` 30/45 → 40/60）、放宽 remux 分片漂移容差（`maxBufferHole` 0.8 → 2.0）、落后直播边缘多一点（`liveSyncDurationCount` 4 → 5/6），减少后端抖动时的转圈卡顿。
+
+### 🔧 工程
+- `.gitignore` 新增 `*.tar` / `*.tar.gz` 规则，避免 `docker save` 导出的镜像污染工作区。
+- 版本号三处统一到 `0.1.3`（修正 v0.1.2 发版时遗漏更新版本号的问题）。
+
+---
+
 ## [0.1.2] - 2026-06-29
 
 ### ✨ 新功能
