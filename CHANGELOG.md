@@ -23,6 +23,7 @@
 - `.gitignore` 新增 `*.tar` / `*.tar.gz` 规则，避免 `docker save` 导出的镜像污染工作区。
 - 版本号三处统一到 `0.1.3`（修正 v0.1.2 发版时遗漏更新版本号的问题）。
 - 删除冗余的 `CLAUDE.md`，统一以 `AGENTS.md` 为项目指引文件（两者正文完全重复，删除后避免漂移；`AGENTS.md` 是通用 AI 编码代理规范，覆盖面更广）。
+- 修正 `AGENTS.md` 前端结构与依赖描述：补全实际存在的 `components/assets/lib/types/test/i18n` 等目录；删除过时的 "Ant Design"，改为实际使用的 Tailwind CSS 4。
 
 ---
 
