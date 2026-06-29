@@ -89,12 +89,18 @@ The backend follows a layered architecture:
 
 ### Frontend Structure (`frontend/src/`)
 
-React 19 + TypeScript + Vite frontend:
+React 19 + TypeScript + Vite frontend (Tailwind CSS 4 + 自定义 CSS,无 UI 组件库):
 
 - **`api/`** - API client modules (channels, schedules, tasks, system, websocket)
-- **`stores/`** - Zustand state stores (channelStore, taskStore, settingStore, uiStore)
+- **`assets/`** - 静态资源(图片、图标等)
+- **`components/`** - 可复用组件(Layout、PlayerModal、PlayerWidget 等)
+- **`i18n/`** - i18next 配置 + 按模块拆分的翻译文件(`i18n/modules/` 下按 channels/dashboard/settings 等分模块)
+- **`lib/`** - 工具库(格式化、请求封装等)
+- **`locales/`** - 语言资源(兼容旧路径,主体在 `i18n/modules/`)
 - **`pages/`** - Page components (Dashboard, Channels, Schedules, Tasks, Settings)
-- **`locales/`** - i18n translation files (zh-CN, en-US)
+- **`stores/`** - Zustand state stores (channelStore, taskStore, settingStore, uiStore)
+- **`types/`** - TypeScript 类型定义
+- **`test/`** - 前端测试
 
 ### Key Data Flow
 
@@ -140,7 +146,7 @@ Base URL: `http://localhost:3000/api`
 
 **Backend**: Axum, Tokio, SQLite (sqlx), tokio-cron-scheduler, tracing, reqwest, anyhow/thiserror
 
-**Frontend**: React 19, TypeScript, Vite, Ant Design, TanStack Query, Zustand, React Router, Axios, i18next
+**Frontend**: React 19, TypeScript, Vite, Tailwind CSS 4, TanStack Query, Zustand, React Router, Axios, i18next
 
 ## Code Conventions
 
