@@ -198,7 +198,16 @@ impl TranscodeService {
             hls_dir.display()
         );
 
-        preflight_http_stream(source_url).await?;
+        // 解析出 FFmpeg 实际要用的 URL。
+        // 关键修复：很多 IPTV 源域名同时有 AAAA(IPv6) 和 A(IPv4) 记录，
+        // 而部署环境(尤其是 Docker 容器)常常 IPv6 出站不通。FFmpeg 走 libc
+        // getaddrinfo 会优先尝试 IPv6 → 连接超时/失败 → 拿到 0 字节分片 →
+        // 播放器卡死(manifestLoadError)。这里在 Rust 侧显式解析 IPv4，
+        // 把 hostname 替换成 IP 再交给 FFmpeg，绕过 IPv6 与 DNS 抖动。
+        // IPv6-only 的源不在 http(s) 范围内，不受影响。
+        let effective_url = resolve_ipv4_url(source_url).await;
+
+        preflight_http_stream(&effective_url).await?;
 
         let mut selected_process = None;
         let mut startup_failure = None;
@@ -223,7 +232,7 @@ impl TranscodeService {
             let mut process = spawn_ffmpeg(
                 ffmpeg_path,
                 profile,
-                source_url,
+                &effective_url,
                 &hls_dir,
                 &playlist_path,
                 &session_id,
@@ -504,9 +513,27 @@ fn spawn_ffmpeg(
         "ignore_err",
     ]);
 
-    // 输入探测与缓冲。IPTV 多播 / RTSP 是常驻流，FFmpeg 不会自己 EOF，
-    // 所以这里不做"HTTP 重连"——那组参数对 udp:// rtsp:// 完全无效，
-    // 只是干扰阅读。真正的输入鲁棒性来自 socket 缓冲 + 错误忽略。
+    // HTTP/HTTPS 源(包括 UDP-over-HTTP 网关,如 http://host:port/udp/239.x)必须开重连：
+    // 这类网关常会周期性重置 TCP 连接(实测 ~40-50s 一次),没有 reconnect 的话
+    // FFmpeg 在连接断开时会持续吐 0 字节分片进 HLS,播放器卡死。
+    // reconnect 是 FFmpeg 的【输入】选项,必须放在 -i 之前,且只对 http(s) 生效,
+    // 对纯 udp:// rtsp:// 多播源无效,所以这里按协议判断,避免噪音。
+    let is_http_source = source_url.starts_with("http://") || source_url.starts_with("https://");
+    if is_http_source {
+        command.args([
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            // 网关重置 TCP 连接时(最常见的中断原因)自动重连。
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+        ]);
+    }
+
+    // 输入探测与缓冲。
     match profile {
         TranscodeProfile::FastRemux => {
             command.args([
@@ -742,6 +769,66 @@ async fn preflight_http_stream(source_url: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 把 http(s) 源 URL 里的 hostname 解析为 IPv4 并替换，
+/// 返回 FFmpeg 应当使用的有效 URL。非 http(s) 或解析失败时原样返回。
+///
+/// 背景：部署环境(尤其是 Docker)常常 IPv6 出站不通，而很多 IPTV 源域名
+/// 的 AAAA 记录会被 getaddrinfo 优先返回。FFmpeg 拿到 IPv6 地址后连接超时，
+/// 转码出 0 字节分片，前端表现为"录制中无法播放"或播放卡死。
+/// 显式锁定 IPv4 可彻底规避，对 IPv6-only 源(罕见)无影响。
+async fn resolve_ipv4_url(source_url: &str) -> String {
+    let Ok(parsed) = Url::parse(source_url) else {
+        return source_url.to_string();
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return source_url.to_string();
+    }
+
+    let Some(host) = parsed.host_str() else {
+        return source_url.to_string();
+    };
+
+    // 已经是 IP 字面量就不必再解析(无论是 v4 还是 v6)。
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return source_url.to_string();
+    }
+
+    // 限定 3 秒，避免 DNS 慢拖累起播。
+    let resolved = match tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::lookup_host(format!("{}:0", host)),
+    )
+    .await
+    {
+        Ok(Ok(addrs)) => addrs,
+        Ok(Err(e)) => {
+            debug!("IPv4 解析失败({host}): {e},沿用原 URL");
+            return source_url.to_string();
+        }
+        Err(_) => {
+            debug!("IPv4 解析超时({host}),沿用原 URL");
+            return source_url.to_string();
+        }
+    };
+
+    // 优先取第一个 IPv4 地址。
+    let Some(ipv4) = resolved
+        .map(|sa| sa.ip())
+        .find(|ip| ip.is_ipv4())
+    else {
+        // 这个域名只有 AAAA 记录，没有 A 记录 —— 保持原样让 FFmpeg 走 IPv6。
+        return source_url.to_string();
+    };
+
+    // 重建 URL：hostname → IPv4，保留 scheme/port/path/query。
+    let mut rebuilt = parsed.clone();
+    if rebuilt.set_host(Some(&ipv4.to_string())).is_err() {
+        return source_url.to_string();
+    }
+    debug!("源 URL 已锁定 IPv4: {source_url} -> {rebuilt}");
+    rebuilt.to_string()
 }
 
 fn wire_ffmpeg_logs(

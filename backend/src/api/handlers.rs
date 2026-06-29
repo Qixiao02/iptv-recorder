@@ -1603,6 +1603,27 @@ pub async fn get_hls_file(
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("读取文件失败: {}", e)))?;
 
+    // 关键容错：当上游(UDP-over-HTTP 网关)周期性重置连接时，FFmpeg 在重连的几秒内
+    // 仍会按 hls_time 切出"空分片"或仅含头的废分片(0~4KB)。这些坏分片一旦被 hls.js
+    // 下载并尝试解码，会导致缓冲空洞/卡死。
+    // 对策：检测到异常小的 .ts 分片时返回 404，让 hls.js 走 fragLoadingMaxRetry 重试，
+    // 在重试窗口内 ffmpeg 通常已完成重连并产出后续正常分片，播放器就能跳过中断段继续。
+    // 阈值 10KB：正常 1080p TS 分片(@6s)约 6MB，10KB 以下的 .ts 必然是无有效数据的废片。
+    if filename.ends_with(".ts") && content.len() < 10_000 {
+        tracing::debug!(
+            "丢弃空分片(上游中断产物): {} {} bytes",
+            filename,
+            content.len()
+        );
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "not_found".to_string(),
+                details: Some("HLS 文件未找到".to_string()),
+            }),
+        ));
+    }
+
     // 根据文件扩展名确定 Content-Type
     let content_type = if filename.ends_with(".m3u8") {
         "application/vnd.apple.mpegurl"
