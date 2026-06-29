@@ -1534,12 +1534,6 @@ pub async fn get_hls_file(
     Extension(transcode_service): Extension<Arc<TranscodeService>>,
     Path((session_id, filename)): Path<(String, String)>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    tracing::info!(
-        "get_hls_file called: session_id={}, filename={}",
-        session_id,
-        filename
-    );
-
     // 客户端正在拉取分片/播放列表 → 刷新空闲计时器，
     // 防止 cleanup 在用户还在观看时把会话回收掉（曾经的 5 分钟 manifestLoadError）。
     transcode_service.touch_session(&session_id).await;
@@ -1571,9 +1565,13 @@ pub async fn get_hls_file(
     let hls_dir = config.storage.preview_hls_dir();
     let file_path = hls_dir.join(&session_id).join(&filename);
 
-    tracing::info!("Looking for HLS file at: {:?}", file_path);
+    // 关键性能点：这里是播放热路径，每个分片都会被请求多次（m3u8 + 每个 .ts）。
+    // 之前每个请求都打 4 条 INFO 日志并格式化 PathBuf，会同步阻塞响应 → 播放卡顿。
+    // 现在只在 DEBUG 级别输出，生产环境默认 INFO 看不到，零开销。
+    tracing::debug!("get_hls_file: {} / {}", session_id, filename);
 
     if !file_path.exists() {
+        // 404 仍然需要 warn，方便排查"为什么播放器请求的分片没了"
         tracing::warn!("HLS file not found: {:?}", file_path);
         return Err((
             StatusCode::NOT_FOUND,
@@ -1588,8 +1586,6 @@ pub async fn get_hls_file(
         .await
         .map_err(|e| internal_error(anyhow::anyhow!("读取文件失败: {}", e)))?;
 
-    tracing::info!("Successfully read HLS file, size: {} bytes", content.len());
-
     // 根据文件扩展名确定 Content-Type
     let content_type = if filename.ends_with(".m3u8") {
         "application/vnd.apple.mpegurl"
@@ -1599,13 +1595,19 @@ pub async fn get_hls_file(
         "application/octet-stream"
     };
 
-    tracing::info!("Returning HLS file with content-type: {}", content_type);
-
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(header::CACHE_CONTROL, "no-cache")
+        // 播放列表必须不缓存（直播 m3u8 持续更新），分片可短缓存避免重复请求。
+        .header(
+            header::CACHE_CONTROL,
+            if filename.ends_with(".m3u8") {
+                "no-cache"
+            } else {
+                "public, max-age=60"
+            },
+        )
         .body(Body::from(content))
         .map_err(|e| internal_error(anyhow::anyhow!("构建响应失败: {}", e)))
 }

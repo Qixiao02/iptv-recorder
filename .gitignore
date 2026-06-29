@@ -53,6 +53,10 @@ tools/
 # Screenshots / test images
 *.png
 
+# Docker 镜像导出产物(docker save 生成的 tar,需要时再导,绝不提交)
+*.tar
+*.tar.gz
+
 # 诊断/临时数据
 .harness/
 0211d*
