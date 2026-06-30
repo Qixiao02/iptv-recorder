@@ -83,6 +83,25 @@ export interface Task {
   current_speed: string | null;
   created_at: string;
   updated_at: string;
+  /** 列表接口 JOIN channels 带,单任务接口可能缺省 */
+  channel_name?: string;
+}
+
+/** 任务列表查询参数(分页 + 状态筛选),对齐后端 TaskListParams */
+export interface TaskListParams {
+  page?: number;
+  page_size?: number;
+  /** running/completed/failed/cancelled/pending;省略或 'all' 时不筛选 */
+  status?: string;
+}
+
+/** 分页任务信封,对齐后端 PaginatedTasks。items[i] 含 channel_name。 */
+export interface PaginatedTasks {
+  items: Task[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export interface ManualRecordRequest {

@@ -12,11 +12,15 @@
  * 具体键(如 `channelKeys.all()`、`taskKeys.all()`)用于读/精确写。
  */
 
-/** 任务列表。当前为不分页的精确键(WS 实时补丁直接 setQueryData 此键)。 */
+/** 任务列表。列表查询按 (status, page, page_size) 参数化,WS 实时补丁用 setQueriesData
+ *  遍历所有任务缓存(根前缀匹配)。 */
 export const taskKeys = {
-  /** 根键,前缀失效用 */
+  /** 根键,前缀失效/批量 setQueriesData 用 */
   root: ['tasks'] as const,
-  /** 任务列表精确键(当前唯一列表查询) */
+  /** 分页列表查询键(参数化)。status/page/page_size 任意组合不同则缓存不同。 */
+  list: (params: { status?: string; page?: number; page_size?: number }) =>
+    ['tasks', params.status ?? 'all', params.page ?? 1, params.page_size ?? 20] as const,
+  /** 旧式无参精确键(供 taskRealtime 仍需精确写的兜底,逐步废弃) */
   all: () => ['tasks'] as const,
 };
 

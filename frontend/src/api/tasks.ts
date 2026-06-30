@@ -1,12 +1,14 @@
 import apiClient from './client';
 import type {
   Task,
+  TaskListParams,
+  PaginatedTasks,
   ManualRecordRequest,
 } from '@/types';
 
-// 获取任务列表
-export const getTasks = (): Promise<Task[]> => {
-  return apiClient.get('/tasks').then((res) => res.data);
+// 获取任务列表(分页 + 状态筛选,返回信封)。省略参数时后端默认 page=1/page_size=20。
+export const getTasks = (params?: TaskListParams): Promise<PaginatedTasks> => {
+  return apiClient.get('/tasks', { params }).then((res) => res.data);
 };
 
 // 获取单个任务

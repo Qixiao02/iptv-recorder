@@ -147,10 +147,11 @@ export const Dashboard: React.FC = () => {
     queryFn: getSchedules,
   });
 
-  const { data: tasks, isLoading: tasksLoading, refetch } = useQuery({
-    queryKey: taskKeys.all(),
-    queryFn: getTasks,
+  const { data: tasksData, isLoading: tasksLoading, refetch } = useQuery({
+    queryKey: taskKeys.list({ page: 1, page_size: 100 }),
+    queryFn: () => getTasks({ page: 1, page_size: 100 }),
   });
+  const tasks = tasksData?.items;
 
   const { data: upcoming, isLoading: upcomingLoading } = useQuery({
     queryKey: upcomingKeys.upcoming(),

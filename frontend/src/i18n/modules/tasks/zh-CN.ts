@@ -19,6 +19,8 @@ export default {
   emptyTitle: '没有任务记录',
   emptyAll: '开始录制后会在这里显示任务',
   emptyFiltered: '没有{{status}}的任务',
+  pageSize: '{{count}} 条/页',
+  total: '共 {{count}} 条',
   live: {
     idle: '未连接',
     connecting: '正在连接实时通道',

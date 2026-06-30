@@ -2,11 +2,10 @@ import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask, clearCompletedTasks, deleteTask } from '@/api/tasks';
-import { getAllChannels } from '@/api/channels';
 import { wsClient, type ConnectionState } from '@/api/websocket';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
-import { channelKeys, taskKeys } from '@/lib/queryKeys';
+import { taskKeys } from '@/lib/queryKeys';
 import { formatBytes, formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import {
@@ -22,9 +21,10 @@ import {
   AlertCircle,
   Trash2,
   Radio,
+  ChevronLeft,
 } from 'lucide-react';
 import type { TaskStatus } from '@/types';
-import type { Task, TaskProgressData, TaskUpdateData } from '@/types';
+import type { Task } from '@/types';
 import './Tasks.css';
 
 const TaskDetailModal = lazy(() => import('@/components/TaskDetailModal'));
@@ -44,9 +44,13 @@ export const Tasks: React.FC = () => {
   const { t, i18n } = useTranslation(['tasks', 'common']);
   const isI18nReady = useI18nNamespace(['tasks', 'common']);
   const queryClient = useQueryClient();
+  // 状态筛选 + 分页都下推到后端(GET /tasks?status=&page=&page_size=)。
+  // 之前是全量拉取 + 前端过滤 + 维护本地 liveProgress Map,现改为信任 React Query
+  // 缓存(由 App.tsx 全局 WS 处理器经 taskRealtime 实时补丁)。
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [liveProgress, setLiveProgress] = useState<Map<string, { percent: number; speed: string; downloaded: number }>>(new Map());
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; taskId: string | null }>({
     isOpen: false,
     taskId: null,
@@ -56,78 +60,34 @@ export const Tasks: React.FC = () => {
     wsClient.getConnectionState(),
   );
 
-  const { data: tasks, isLoading, refetch } = useQuery({
-    queryKey: taskKeys.all(),
-    queryFn: getTasks,
+  // 列表查询:状态筛选/分页参数化缓存。filterStatus/page/pageSize 任一变化即独立缓存。
+  const tasksQueryParams = useMemo(
+    () => ({
+      status: filterStatus === 'all' ? undefined : filterStatus,
+      page,
+      page_size: pageSize,
+    }),
+    [filterStatus, page, pageSize],
+  );
+
+  const { data: tasksData, isLoading, refetch } = useQuery({
+    queryKey: taskKeys.list(tasksQueryParams),
+    queryFn: () => getTasks(tasksQueryParams),
     refetchInterval: (query) => {
-      const currentTasks = query.state.data as Task[] | undefined;
-      return currentTasks?.some((task) => task.status === 'running') ? 3000 : false;
+      const data = query.state.data;
+      return data?.items.some((task) => task.status === 'running') ? 3000 : false;
     },
     refetchIntervalInBackground: true,
   });
 
-  const { data: channels } = useQuery({
-    queryKey: channelKeys.all(),
-    queryFn: getAllChannels,
-  });
+  const tasks = tasksData?.items;
+  const totalPages = tasksData?.total_pages ?? 1;
+  const total = tasksData?.total ?? 0;
 
   useEffect(() => wsClient.onConnectionStateChange(setConnectionState), []);
 
-  useEffect(() => {
-    wsClient.connect();
-
-    const patchTask = (taskId: string, patch: Partial<Task>) => {
-      queryClient.setQueryData<Task[]>(taskKeys.all(), (oldTasks) => {
-        if (!oldTasks) return oldTasks;
-        return oldTasks.map((task) => (
-          task.id === taskId
-            ? { ...task, ...patch, updated_at: patch.updated_at ?? new Date().toISOString() }
-            : task
-        ));
-      });
-    };
-
-    const unsubscribeProgress = wsClient.onTaskProgress((data: TaskProgressData) => {
-      setLiveProgress((prev) => {
-        const next = new Map(prev);
-        next.set(data.task_id, { percent: data.percent, speed: data.speed, downloaded: data.downloaded_bytes });
-        return next;
-      });
-      patchTask(data.task_id, {
-        progress_percent: data.percent,
-        file_size: data.downloaded_bytes,
-        current_speed: data.speed,
-      });
-    });
-
-    const unsubscribeUpdate = wsClient.onTaskUpdate((data: TaskUpdateData) => {
-      setLiveProgress((prev) => {
-        const next = new Map(prev);
-        next.delete(data.task_id);
-        return next;
-      });
-      patchTask(data.task_id, {
-        status: data.status,
-        error_message: data.error_message,
-        ...(data.status === 'completed' ? { progress_percent: 100 } : {}),
-        ...(data.status === 'running' ? {} : { current_speed: null }),
-      });
-      void queryClient.invalidateQueries({ queryKey: taskKeys.root });
-    });
-
-    return () => {
-      unsubscribeProgress();
-      unsubscribeUpdate();
-    };
-  }, [queryClient]);
-
-  const channelMap = useMemo(() => {
-    const map = new Map<string, string>();
-    channels?.forEach((channel) => {
-      map.set(channel.id, channel.name);
-    });
-    return map;
-  }, [channels]);
+  // 注:不再订阅 onTaskProgress/onTaskUpdate——App.tsx 已全局订阅并通过 taskRealtime
+  // (setQueriesData 按 taskKeys.root 前缀遍历所有任务缓存)实时补丁,这里直接读缓存即可。
 
   const selectedTask = useMemo(
     () => tasks?.find((task) => task.id === selectedTaskId) ?? null,
@@ -169,29 +129,102 @@ export const Tasks: React.FC = () => {
     },
   });
 
-  // Merge live progress into tasks for real-time updates
-  const tasksWithLiveProgress = useMemo(() => {
-    if (!tasks) return undefined;
-    if (liveProgress.size === 0) return tasks;
-    return tasks.map((task) => {
-      const live = liveProgress.get(task.id);
-      if (!live) return task;
-      return { ...task, progress_percent: live.percent, current_speed: live.speed, file_size: live.downloaded };
-    });
-  }, [tasks, liveProgress]);
-
-  const filteredTasks = tasksWithLiveProgress?.filter((task) => {
-    if (filterStatus === 'all') return true;
-    return task.status === filterStatus;
-  });
-
-  const runningCount = tasksWithLiveProgress?.filter((task) => task.status === 'running').length || 0;
-  const completedCount = tasksWithLiveProgress?.filter((task) => task.status === 'completed').length || 0;
-  const failedCount = tasksWithLiveProgress?.filter((task) => task.status === 'failed').length || 0;
+  // 顶部计数:基于当前筛选下的总数(total 来自后端,无需前端再算)。
+  // running/completed/failed 计数仅对"全部"视图有意义(按状态筛选时 total 即该状态数)。
+  const runningCount = filterStatus === 'all' ? tasks?.filter((task) => task.status === 'running').length ?? 0 : 0;
 
   const statusLabel = (status: TaskStatus) => t(`common:taskStatus.${status}`);
-  const getChannelName = (channelId: string) =>
-    channelMap.get(channelId) || t('common:channelFallback', { id: channelId.slice(0, 8) });
+  // 频道名直接读 task.channel_name(列表接口已 JOIN channels 带),省去全量频道拉取。
+  const getChannelName = (task: Task) =>
+    task.channel_name || t('common:channelFallback', { id: task.channel_id.slice(0, 8) });
+
+  const handleFilterChange = (status: FilterStatus) => {
+    setFilterStatus(status);
+    setPage(1); // 切换状态筛选回到第一页
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+  };
+
+  const renderPagination = () => {
+    if (!tasksData || totalPages <= 1) return null;
+
+    const pages = [];
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, page - Math.floor(maxVisiblePages / 2));
+    const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage + 1 < maxVisiblePages) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+
+    return (
+      <div className="pagination">
+        <button
+          className="pagination-btn"
+          onClick={() => handlePageChange(page - 1)}
+          disabled={page <= 1}
+          aria-label={t('common:previousPage', { defaultValue: '上一页' })}
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        {startPage > 1 && (
+          <>
+            <button className="pagination-btn" onClick={() => handlePageChange(1)}>1</button>
+            {startPage > 2 && <span className="pagination-ellipsis">...</span>}
+          </>
+        )}
+
+        {pages.map((pageNumber) => (
+          <button
+            key={pageNumber}
+            className={`pagination-btn ${pageNumber === page ? 'active' : ''}`}
+            onClick={() => handlePageChange(pageNumber)}
+          >
+            {pageNumber}
+          </button>
+        ))}
+
+        {endPage < totalPages && (
+          <>
+            {endPage < totalPages - 1 && <span className="pagination-ellipsis">...</span>}
+            <button className="pagination-btn" onClick={() => handlePageChange(totalPages)}>
+              {totalPages}
+            </button>
+          </>
+        )}
+
+        <button
+          className="pagination-btn"
+          onClick={() => handlePageChange(page + 1)}
+          disabled={page >= totalPages}
+          aria-label={t('common:nextPage', { defaultValue: '下一页' })}
+        >
+          <ChevronRight size={16} />
+        </button>
+
+        <select
+          className="pagination-size"
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(Number(e.target.value));
+            setPage(1);
+          }}
+        >
+          {[10, 20, 50, 100].map((size) => (
+            <option key={size} value={size}>{t('tasks:pageSize', { count: size })}</option>
+          ))}
+        </select>
+        <span className="pagination-total">{t('tasks:total', { count: total })}</span>
+      </div>
+    );
+  };
 
   const formatDuration = (seconds: number) => {
     if (!seconds) return '-';
@@ -246,19 +279,15 @@ export const Tasks: React.FC = () => {
           <div className="stat-label">{t('tasks:running')}</div>
         </div>
         <div className="stat-item">
-          <div className="stat-number success">{completedCount}</div>
-          <div className="stat-label">{t('tasks:completed')}</div>
-        </div>
-        <div className="stat-item">
-          <div className="stat-number error">{failedCount}</div>
-          <div className="stat-label">{t('tasks:failed')}</div>
+          <div className="stat-number">{total}</div>
+          <div className="stat-label">{filterStatus === 'all' ? t('tasks:all') : statusLabel(filterStatus as TaskStatus)}</div>
         </div>
       </div>
 
       <div className="filter-tabs">
         <button
           className={`tab-btn ${filterStatus === 'all' ? 'active' : ''}`}
-          onClick={() => setFilterStatus('all')}
+          onClick={() => handleFilterChange('all')}
         >
           {t('tasks:all')}
         </button>
@@ -266,7 +295,7 @@ export const Tasks: React.FC = () => {
           <button
             key={status}
             className={`tab-btn ${filterStatus === status ? 'active' : ''}`}
-            onClick={() => setFilterStatus(status as TaskStatus)}
+            onClick={() => handleFilterChange(status as TaskStatus)}
           >
             {meta.icon}
             {statusLabel(status as TaskStatus)}
@@ -280,15 +309,14 @@ export const Tasks: React.FC = () => {
             <div key={item} className="task-skeleton card animate-shimmer" />
           ))}
         </div>
-      ) : filteredTasks && filteredTasks.length > 0 ? (
+      ) : tasks && tasks.length > 0 ? (
         <div className="tasks-list">
-          {filteredTasks.map((task, index) => {
+          {tasks.map((task, index) => {
             const meta = statusMeta[task.status];
             const isRunning = task.status === 'running';
-            const channelName = getChannelName(task.channel_id);
-            const live = liveProgress.get(task.id);
-            const displayProgress = isRunning && live ? live.percent : task.progress_percent;
-            const displaySpeed = isRunning && live ? live.speed : task.current_speed;
+            const channelName = getChannelName(task);
+            const displayProgress = task.progress_percent;
+            const displaySpeed = task.current_speed;
 
             return (
               <div
@@ -409,13 +437,15 @@ export const Tasks: React.FC = () => {
         </div>
       )}
 
+      {renderPagination()}
+
       <Suspense fallback={null}>
         {shouldRenderTaskDetail && (
           <TaskDetailModal
             isOpen
             onClose={() => setSelectedTaskId(null)}
             task={selectedTask}
-            channelName={selectedTask ? channelMap.get(selectedTask.channel_id) : undefined}
+            channelName={selectedTask ? getChannelName(selectedTask) : undefined}
           />
         )}
 
