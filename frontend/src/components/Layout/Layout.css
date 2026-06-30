@@ -609,6 +609,15 @@
     transform: translateX(0);
   }
 
+  /* 移动端侧边栏抽屉遮罩:点按关闭。z-index 高于 header(≤50)、低于 sidebar(100)。
+     保证抽屉本身可点击,同时盖住页面其余部分。 */
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 90;
+  }
+
   .sidebar-toggle {
     display: none;
   }

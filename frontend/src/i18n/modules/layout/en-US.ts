@@ -5,6 +5,8 @@ export default {
     schedules: 'Schedules',
     tasks: 'Tasks',
     settings: 'Settings',
+    openMenu: 'Open navigation menu',
+    closeMenu: 'Close navigation menu',
   },
   theme: {
     switchToLight: 'Switch to light mode',
