@@ -1250,8 +1250,12 @@ pub async fn channel_stream(
 async fn proxy_stream_response(
     url: &str,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+    // 注意:不设整体 .timeout() —— 它覆盖请求 + 整段 body 读取,长媒体流(直播/大片)
+    // 会被中途杀断。改用 connect_timeout 快速暴露建连失败。流式转发用
+    // bytes_stream(),内存占用 O(buffer) 而非把整条流读进内存(原先 .bytes().await
+    // 是内存耗尽向量)。
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| internal_error(anyhow::anyhow!("创建 HTTP 客户端失败: {}", e)))?;
 
@@ -1264,29 +1268,26 @@ async fn proxy_stream_response(
     let status = response.status();
     let headers = response.headers().clone();
 
-    let body_bytes = response
-        .bytes()
-        .await
-        .map_err(|e| internal_error(anyhow::anyhow!("读取流数据失败: {}", e)))?;
-
-    // 构建响应，复制必要的头信息
+    // 构建响应,复制必要头信息
     let mut response_builder = Response::builder().status(status);
 
-    // 复制 Content-Type 和其他重要头
+    // 复制 Content-Type(分片类型识别必需)。不再复制 Content-Length:
+    // 流式转发按 chunked 传输,上游声明的长度在分段场景下未必准确,且会被 axum 覆盖。
     for (name, value) in headers.iter() {
-        if name == "content-type" || name == "content-length" {
+        if name == "content-type" {
             response_builder = response_builder.header(name, value);
         }
     }
 
-    // 添加 CORS 头
+    // CORS 头
     response_builder = response_builder
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, OPTIONS")
         .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*");
 
+    // 增量流式转发:上游 chunk 一到就透传给客户端,不缓冲整个 body。
     response_builder
-        .body(Body::from(body_bytes))
+        .body(Body::from_stream(response.bytes_stream()))
         .map_err(|e| internal_error(anyhow::anyhow!("构建响应失败: {}", e)))
 }
 

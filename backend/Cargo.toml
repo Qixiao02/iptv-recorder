@@ -41,7 +41,7 @@ tokio-cron-scheduler = "0.12"
 cron = "0.12"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "cookies", "socks"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "socks", "stream"] }
 
 # Logging
 tracing = "0.1"
