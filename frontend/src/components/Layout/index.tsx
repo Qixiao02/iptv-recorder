@@ -133,21 +133,28 @@ export const Layout: React.FC = () => {
             const Icon = item.icon;
             const isActive = location.pathname === item.key;
             return (
-              <div
+              <button
+                type="button"
                 key={item.key}
                 className={`sidebar-item ${isActive ? 'active' : ''}`}
                 onClick={() => handleNavigate(item.key)}
+                aria-current={isActive ? 'page' : undefined}
+                aria-label={t(item.label)}
+                title={t(item.label)}
               >
                 <Icon size={20} strokeWidth={1.75} />
                 {!sidebarCollapsed && <span>{t(item.label)}</span>}
-              </div>
+              </button>
             );
           })}
         </nav>
 
         <button
+          type="button"
           className="sidebar-toggle"
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          aria-label={sidebarCollapsed ? t('layout:menu.expand') : t('layout:menu.collapse')}
+          aria-expanded={!sidebarCollapsed}
         >
           {sidebarCollapsed ? (
             <ChevronRight size={16} />
