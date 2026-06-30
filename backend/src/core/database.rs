@@ -5,7 +5,7 @@
 use anyhow::Result;
 use sqlx::{
     migrate::Migrator,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     Pool, Sqlite,
 };
 use std::path::Path;
@@ -22,9 +22,17 @@ pub async fn init(db_path: &str, pool_size: u32) -> Result<Db> {
     let absolute_path = resolve_db_path(db_path)?;
     ensure_parent_dir(&absolute_path).await?;
 
+    // 关键 PRAGMA:默认 journal 模式为 DELETE(全表锁 + 每事务 fsync),并发录制心跳 +
+    // cron + 清理会触发 "database is locked"。WAL 允许并发读 + 单写,synchronous=Normal
+    // 在 WAL 下足够安全且大幅降低 fsync 成本;busy_timeout 让锁冲突等待而非立即报错。
+    // foreign_keys=ON 让 schema 声明的 ON DELETE CASCADE 真正生效(SQLite 默认关闭)。
     let options = SqliteConnectOptions::new()
         .filename(&absolute_path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .foreign_keys(true);
 
     tracing::info!("Connecting to database: {}", absolute_path.display());
 
