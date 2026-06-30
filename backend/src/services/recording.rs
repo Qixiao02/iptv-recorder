@@ -646,6 +646,106 @@ impl RecordingService {
         Ok(tasks)
     }
 
+    /// 启动恢复：把上次进程残留的 running 任务批量标记为 failed。
+    ///
+    /// **调用时机**：`main.rs` 启动序列中，数据库初始化之后、Cron 调度器启动之前。
+    ///
+    /// **为什么需要**：录制进度的 3 秒心跳由一个后台监控任务负责，后端一旦重启，
+    /// 该监控任务随之死亡，而 DB 里这些任务的 status 仍是 'running'。更糟的是
+    /// migration 0006 的部分唯一索引会让僵尸 running 行永久占用该频道/计划的
+    /// 录制名额（admit_recording 会拒绝同频道再录），导致"重启后这个台再也录不了"。
+    ///
+    /// 此方法在启动时一次性清理：所有 running 任务 → failed，带明确原因，
+    /// 既释放唯一索引名额，也避免用户看到"卡死的运行中任务"。
+    ///
+    /// 由于本进程刚启动，ProcessManager 内存表为空，残留任务对应的 OS 进程
+    /// 对本进程而言已不存在（可能已被系统回收，或成为孤儿），这里只改 DB 状态。
+    pub async fn reconcile_orphaned_tasks(&self) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let reason = "后端重启，录制监控中断（任务已被自动标记为失败）";
+
+        // 先查出来，用于发通知 + 日志（UPDATE 只返回行数）
+        let orphans: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, channel_id, schedule_id FROM tasks WHERE status = 'running'",
+        )
+        .fetch_all(&self.ctx.db)
+        .await?;
+
+        if orphans.is_empty() {
+            return Ok(());
+        }
+
+        let count = orphans.len();
+        info!(
+            "🧟 启动恢复：发现 {} 个上次进程残留的 running 任务，将标记为失败",
+            count
+        );
+
+        // 批量置为 failed。无需 WHERE status='running' 守卫——这些是启动时刻的孤儿，
+        // 本进程还没开始任何录制，不存在与其它路径的竞态。
+        let result = sqlx::query(
+            r#"
+            UPDATE tasks
+            SET status = 'failed', ended_at = ?, error_message = ?, updated_at = ?
+            WHERE status = 'running'
+            "#,
+        )
+        .bind(&now)
+        .bind(reason)
+        .bind(&now)
+        .execute(&self.ctx.db)
+        .await?;
+
+        let affected = result.rows_affected();
+        info!(
+            "🧟 启动恢复完成：{} 个僵尸任务已标记失败（DB 受影响行数 {}）",
+            count, affected
+        );
+
+        // 为每个僵尸任务发事件 + 通知，让前端实时变红、释放名额、留痕
+        for (task_id, channel_id, _schedule_id) in &orphans {
+            // 推 WebSocket 事件，前端任务列表立即更新
+            if let Some(ref sender) = self.event_sender {
+                let _ = sender.send(Event::TaskUpdate(TaskUpdateEvent {
+                    task_id: task_id.clone(),
+                    status: EventTaskStatus::Failed,
+                    error_message: Some(reason.to_string()),
+                }));
+            }
+
+            // 查频道名用于通知文案
+            let channel_name = self
+                .get_channel(channel_id)
+                .await
+                .map(|c| c.name)
+                .unwrap_or_else(|_| "未知频道".to_string());
+
+            notify_terminal_task(
+                self.ctx.clone(),
+                self.event_sender.clone(),
+                None, // 启动恢复不受 on_failure 开关控制——这是强制清理，必须留痕
+                notif_cat::RECORDING_FAILED,
+                notif_lvl::WARNING,
+                format!("录制已中断: {}", channel_name),
+                format!(
+                    "频道「{}」的录制因后端重启而中断，已自动标记为失败。如需继续，请重新发起录制",
+                    channel_name
+                ),
+                Some(
+                    serde_json::json!({
+                        "channel": channel_name,
+                        "reason": "backend_restart",
+                    })
+                    .to_string(),
+                ),
+                task_id.clone(),
+            )
+            .await;
+        }
+
+        Ok(())
+    }
+
     /// 取消任务
     pub async fn cancel(&self, id: &str) -> Result<()> {
         info!("取消录制任务: task_id={}", id);

@@ -15,6 +15,7 @@ pub mod post_process;
 pub mod recording;
 pub mod schedule;
 pub mod scheduler;
+pub mod task_liveness;
 pub mod transcode;
 pub mod url_safety;
 
@@ -33,6 +34,7 @@ pub use post_process::PostProcessor;
 pub use recording::RecordingService;
 pub use schedule::ScheduleService;
 pub use scheduler::{CronTrigger, SchedulerManager, UpcomingTask};
+pub use task_liveness::TaskLivenessService;
 pub use transcode::TranscodeService;
 
 use crate::config::Config;

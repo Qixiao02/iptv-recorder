@@ -98,6 +98,27 @@ async fn main() -> Result<()> {
     .start();
     info!("💓 Heartbeat Inspection Service initialized");
 
+    // 启动恢复：把上次进程残留的 running 任务批量标记为 failed。
+    // 必须在调度器启动之前执行——否则僵尸 running 行会因 migration 0006 的
+    // 部分唯一索引阻止对应频道/计划触发新录制。用 process_manager 构造一个
+    // 临时 RecordingService 仅用于调用 reconcile（它不需要实际管理进程）。
+    let recovery_svc = services::RecordingService::new(
+        process_manager.clone(),
+        service_ctx.clone(),
+        Some(event_bus.sender()),
+    );
+    if let Err(e) = recovery_svc.reconcile_orphaned_tasks().await {
+        tracing::warn!("启动恢复（清理僵尸 running 任务）失败: {}", e);
+    }
+
+    // 启动录制任务僵尸巡检服务：运行期持续检测"长时间无进度"的 running 任务
+    Arc::new(services::TaskLivenessService::new(
+        service_ctx.clone(),
+        Some(event_bus.sender()),
+    ))
+    .start();
+    info!("🧟‍♂️ Task Liveness Inspector initialized");
+
     // 启动 Cron 调度器
     let scheduler = Arc::new(
         services::SchedulerManager::new(db.clone(), config.clone(), process_manager.clone())

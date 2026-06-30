@@ -150,6 +150,7 @@ export default {
     nM3u8dlRePath: 'N_m3u8DL-RE Path',
     maxRetry: 'Max Retry',
     threadCount: 'Thread Count',
+    staleTimeout: 'Stale Task Timeout',
     notification: 'Notification',
     notifyOnComplete: 'Notify on Complete',
     notifyOnFailure: 'Notify on Failure',
