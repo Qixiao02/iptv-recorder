@@ -18,7 +18,6 @@ import {
   StopCircle,
   Clock,
   ArrowUpRight,
-  MoreHorizontal,
 } from 'lucide-react';
 import type { Task } from '@/types';
 import './Dashboard.css';
@@ -115,13 +114,15 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
 
       <div className="task-actions">
         {isRunning && (
-          <button className="action-btn danger" onClick={onStop}>
+          <button
+            className="action-btn danger"
+            onClick={onStop}
+            aria-label={t('common:stop', { defaultValue: '停止' })}
+            title={t('common:stop', { defaultValue: '停止' })}
+          >
             <StopCircle size={16} />
           </button>
         )}
-        <button className="action-btn">
-          <MoreHorizontal size={16} />
-        </button>
       </div>
     </div>
   );

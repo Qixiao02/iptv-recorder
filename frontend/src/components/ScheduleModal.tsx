@@ -320,6 +320,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
                 className="help-btn"
                 onClick={() => setShowCronHelp(!showCronHelp)}
                 title={t('components:scheduleModal.cronHelpTitle')}
+                aria-label={t('components:scheduleModal.cronHelpTitle')}
+                aria-expanded={showCronHelp}
               >
                 <HelpCircle size={16} />
               </button>
@@ -465,6 +467,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
                       className="help-btn"
                       onClick={() => setShowTranscodeHelp(!showTranscodeHelp)}
                       title={t('components:scheduleModal.transcodeHelpTitle')}
+                      aria-label={t('components:scheduleModal.transcodeHelpTitle')}
+                      aria-expanded={showTranscodeHelp}
                     >
                       <HelpCircle size={16} />
                     </button>

@@ -407,6 +407,7 @@ export const Tasks: React.FC = () => {
                         className="btn btn-ghost btn-sm btn-delete"
                         onClick={() => setDeleteConfirm({ isOpen: true, taskId: task.id })}
                         title={t('tasks:deleteRecord')}
+                        aria-label={t('tasks:deleteRecord')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -415,6 +416,8 @@ export const Tasks: React.FC = () => {
                   <button
                     className="action-btn"
                     onClick={() => setSelectedTaskId(task.id)}
+                    aria-label={t('tasks:view', { defaultValue: '查看详情' })}
+                    title={t('tasks:view', { defaultValue: '查看详情' })}
                   >
                     <ChevronRight size={16} />
                   </button>
