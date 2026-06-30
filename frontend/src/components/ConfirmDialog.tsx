@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, CheckCircle, XCircle, X } from 'lucide-react';
-import type { ToastItem } from './useToast';
+import type { ToastItem } from '@/stores/toastStore';
 import './ConfirmDialog.css';
 
 interface ConfirmDialogProps {
