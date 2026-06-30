@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { getEpgPrograms } from '@/api/epg';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import { epgKeys } from '@/lib/queryKeys';
+import { useModalA11y } from '@/lib/useModalA11y';
 import type { AppLanguage } from '@/i18n/types';
 import { CalendarDays, Loader2, X } from 'lucide-react';
 import './Modal.css';
@@ -24,15 +25,25 @@ export const EpgProgramsModal: React.FC<EpgProgramsModalProps> = ({ isOpen, onCl
     queryFn: () => getEpgPrograms(channelRef, 24),
     enabled: isOpen && channelRef.length > 0,
   });
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div
+      className="modal-overlay"
+      onClick={onClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="epg-programs-title"
+      tabIndex={-1}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{t('components:epgPrograms.title', { channelName })}</h2>
-          <button className="modal-close" onClick={onClose}>
+          <h2 id="epg-programs-title">{t('components:epgPrograms.title', { channelName })}</h2>
+          <button className="modal-close" onClick={onClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>

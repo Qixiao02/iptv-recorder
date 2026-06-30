@@ -6,6 +6,7 @@ import { getAllChannels } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { channelKeys, scheduleKeys, upcomingKeys } from '@/lib/queryKeys';
+import { useModalA11y } from '@/lib/useModalA11y';
 import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
 import type { Schedule, CreateScheduleRequest, Channel } from '@/types';
 import './Modal.css';
@@ -98,6 +99,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const [channelSearchOpen, setChannelSearchOpen] = useState(false);
   const [channelKeyword, setChannelKeyword] = useState('');
   const channelSearchRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   const { data: channels } = useQuery({
     queryKey: channelKeys.all(),
@@ -212,11 +215,19 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div
+      className="modal-overlay"
+      onClick={handleClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="schedule-modal-title"
+      tabIndex={-1}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{isEdit ? t('components:scheduleModal.editTitle') : t('components:scheduleModal.createTitle')}</h2>
-          <button className="modal-close" onClick={handleClose}>
+          <h2 id="schedule-modal-title">{isEdit ? t('components:scheduleModal.editTitle') : t('components:scheduleModal.createTitle')}</h2>
+          <button className="modal-close" onClick={handleClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>

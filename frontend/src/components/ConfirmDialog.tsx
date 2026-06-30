@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, CheckCircle, XCircle, X } from 'lucide-react';
 import type { ToastItem } from '@/stores/toastStore';
+import { useModalA11y } from '@/lib/useModalA11y';
 import './ConfirmDialog.css';
 
 interface ConfirmDialogProps {
@@ -35,6 +36,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isLoading = false,
 }) => {
   const { t } = useTranslation(['common']);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -45,9 +48,18 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   };
 
   return (
-    <div className="confirm-overlay" onClick={onClose}>
+    <div
+      className="confirm-overlay"
+      onClick={onClose}
+      ref={overlayRef}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
+      aria-describedby="confirm-dialog-message"
+      tabIndex={-1}
+    >
       <div className={`confirm-dialog ${type}`} onClick={(e) => e.stopPropagation()}>
-        <button className="confirm-close" onClick={onClose} disabled={isLoading}>
+        <button className="confirm-close" onClick={onClose} disabled={isLoading} aria-label={t('common:close', { defaultValue: '关闭' })}>
           <X size={18} />
         </button>
 
@@ -55,8 +67,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           {iconMap[type]}
         </div>
 
-        <h3 className="confirm-title">{title}</h3>
-        <p className="confirm-message">{message}</p>
+        <h3 className="confirm-title" id="confirm-dialog-title">{title}</h3>
+        <p className="confirm-message" id="confirm-dialog-message">{message}</p>
 
         <div className="confirm-actions">
           <button className="btn btn-ghost" onClick={onClose} disabled={isLoading}>

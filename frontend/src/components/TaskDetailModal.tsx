@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { useModalA11y } from '@/lib/useModalA11y';
 import { toast } from '@/stores/toastStore';
 import {
   X,
@@ -42,6 +43,8 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 }) => {
   const { t, i18n } = useTranslation(['components', 'common']);
   useI18nNamespace(['components', 'common']);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   if (!isOpen || !task) return null;
 
@@ -84,11 +87,19 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div
+      className="modal-overlay"
+      onClick={onClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="task-detail-title"
+      tabIndex={-1}
+    >
       <div className="modal-content modal-content-fixed" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{t('components:taskDetail.title')}</h2>
-          <button className="modal-close" onClick={onClose}>
+          <h2 id="task-detail-title">{t('components:taskDetail.title')}</h2>
+          <button className="modal-close" onClick={onClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>

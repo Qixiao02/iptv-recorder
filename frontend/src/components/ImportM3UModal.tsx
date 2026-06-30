@@ -7,6 +7,7 @@ import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { X, Upload, Link, FileText, Loader2, CheckCircle, AlertCircle, FileUp } from 'lucide-react';
 import { toast } from '@/stores/toastStore';
 import { channelKeys } from '@/lib/queryKeys';
+import { useModalA11y } from '@/lib/useModalA11y';
 import type { ImportM3UResponse } from '@/types';
 import './Modal.css';
 
@@ -32,6 +33,8 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   const importUrlMutation = useMutation({
     mutationFn: importM3UFromUrl,
@@ -134,11 +137,19 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div
+      className="modal-overlay"
+      onClick={handleClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-m3u-title"
+      tabIndex={-1}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{t('components:importM3u.title')}</h2>
-          <button className="modal-close" onClick={handleClose}>
+          <h2 id="import-m3u-title">{t('components:importM3u.title')}</h2>
+          <button className="modal-close" onClick={handleClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>

@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createChannel, updateChannel } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { channelKeys } from '@/lib/queryKeys';
+import { useModalA11y } from '@/lib/useModalA11y';
 import { X, Loader2 } from 'lucide-react';
 import type { Channel, CreateChannelRequest } from '@/types';
 import './Modal.css';
@@ -30,6 +31,8 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   const queryClient = useQueryClient();
   const isEdit = !!channel;
   const [form, setForm] = useState<CreateChannelRequest>(emptyForm);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -92,11 +95,19 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div
+      className="modal-overlay"
+      onClick={handleClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="channel-modal-title"
+      tabIndex={-1}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{isEdit ? t('components:channelModal.editTitle') : t('components:channelModal.createTitle')}</h2>
-          <button className="modal-close" onClick={handleClose}>
+          <h2 id="channel-modal-title">{isEdit ? t('components:channelModal.editTitle') : t('components:channelModal.createTitle')}</h2>
+          <button className="modal-close" onClick={handleClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>
