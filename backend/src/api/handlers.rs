@@ -18,7 +18,8 @@ use crate::core::event::EventBus;
 use crate::core::ProcessManager;
 use crate::models::{
     Channel, CreateChannelRequest, CreateScheduleRequest, EpgProgram, EpgSource, ErrorResponse,
-    ImportM3UResponse, ManualRecordRequest, Schedule, SystemHealth, Task,
+    ImportM3UResponse, ManualRecordRequest, PaginatedTasks, Schedule, SystemHealth, Task,
+    TaskListParams,
 };
 use crate::services::{
     AuditService, AuthService, ChannelService, ChannelTestResult, Claims, CleanupService,
@@ -563,12 +564,13 @@ pub async fn toggle_schedule(
 
 pub async fn list_tasks(
     State((db, _scheduler, _process_manager, config)): State<AppState>,
-) -> Result<Json<Vec<Task>>, (StatusCode, Json<ErrorResponse>)> {
+    Query(params): Query<TaskListParams>,
+) -> Result<Json<PaginatedTasks>, (StatusCode, Json<ErrorResponse>)> {
     let ctx = ServiceContext::new(db, config);
     let service = RecordingService::new(_process_manager, ctx, None);
 
-    match service.list_tasks().await {
-        Ok(tasks) => Ok(Json(tasks)),
+    match service.list_tasks_paginated(params).await {
+        Ok(result) => Ok(Json(result)),
         Err(e) => Err(internal_error(e)),
     }
 }
