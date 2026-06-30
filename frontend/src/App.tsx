@@ -5,6 +5,7 @@ import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { wsClient } from '@/api/websocket';
+import { setAuthNavigator } from '@/api/client';
 import { initTheme } from '@/stores/themeStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -69,6 +70,15 @@ function App() {
   const addAlert = useUIStore((state) => state.addAlert);
   const onNotificationReceived = useNotificationStore((state) => state.onNotificationReceived);
   const fetchUnreadCount = useNotificationStore((state) => state.fetchUnreadCount);
+
+  // 注册 SPA 导航器给 axios 401 拦截器:Token 失效时走 SPA 路由(带 from 回跳),
+  // 而非整页硬跳。createBrowserRouter 实例的 navigate 签名为 (to, opts?)。
+  useEffect(() => {
+    setAuthNavigator((to, opts) => {
+      router.navigate(to, opts);
+    });
+    return () => setAuthNavigator(null);
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated) {
