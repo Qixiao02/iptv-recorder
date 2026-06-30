@@ -5,6 +5,7 @@ import { createSchedule, updateSchedule } from '@/api/schedules';
 import { getAllChannels } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys, scheduleKeys, upcomingKeys } from '@/lib/queryKeys';
 import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
 import type { Schedule, CreateScheduleRequest, Channel } from '@/types';
 import './Modal.css';
@@ -99,7 +100,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const channelSearchRef = useRef<HTMLDivElement>(null);
 
   const { data: channels } = useQuery({
-    queryKey: ['channels', 'all'],
+    queryKey: channelKeys.all(),
     queryFn: getAllChannels,
   });
 
@@ -164,8 +165,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const createMutation = useMutation({
     mutationFn: createSchedule,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
-      queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
+      queryClient.invalidateQueries({ queryKey: upcomingKeys.upcoming() });
       toast.success(t('common:toast.scheduleCreated'));
       handleClose();
     },
@@ -178,8 +179,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     mutationFn: ({ id, data }: { id: string; data: CreateScheduleRequest }) =>
       updateSchedule(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
-      queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
+      queryClient.invalidateQueries({ queryKey: upcomingKeys.upcoming() });
       toast.success(t('common:toast.scheduleUpdated'));
       handleClose();
     },

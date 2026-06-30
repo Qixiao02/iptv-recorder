@@ -7,6 +7,7 @@ import { getSchedules } from '@/api/schedules';
 import { getUpcoming } from '@/api/system';
 import { formatBytes, formatMinutes, formatShortDateTime } from '@/i18n/format';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys, scheduleKeys, taskKeys, upcomingKeys } from '@/lib/queryKeys';
 import type { AppLanguage } from '@/i18n/types';
 import {
   Tv,
@@ -132,27 +133,27 @@ export const Dashboard: React.FC = () => {
   const queryClient = useQueryClient();
 
   const { data: channels } = useQuery({
-    queryKey: ['channels', 'count'],
+    queryKey: channelKeys.count(),
     queryFn: () => getChannels({ page_size: 1 }),
   });
 
   const { data: allChannels } = useQuery({
-    queryKey: ['channels', 'all'],
+    queryKey: channelKeys.all(),
     queryFn: getAllChannels,
   });
 
   const { data: schedules } = useQuery({
-    queryKey: ['schedules'],
+    queryKey: scheduleKeys.all(),
     queryFn: getSchedules,
   });
 
   const { data: tasks, isLoading: tasksLoading, refetch } = useQuery({
-    queryKey: ['tasks'],
+    queryKey: taskKeys.all(),
     queryFn: getTasks,
   });
 
   const { data: upcoming, isLoading: upcomingLoading } = useQuery({
-    queryKey: ['upcoming'],
+    queryKey: upcomingKeys.upcoming(),
     queryFn: getUpcoming,
     refetchInterval: 10000,
   });
@@ -160,7 +161,7 @@ export const Dashboard: React.FC = () => {
   const cancelMutation = useMutation({
     mutationFn: cancelTask,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
     },
   });
 

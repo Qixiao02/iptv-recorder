@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getEpgPrograms } from '@/api/epg';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
+import { epgKeys } from '@/lib/queryKeys';
 import type { AppLanguage } from '@/i18n/types';
 import { CalendarDays, Loader2, X } from 'lucide-react';
 import './Modal.css';
@@ -19,7 +20,7 @@ export const EpgProgramsModal: React.FC<EpgProgramsModalProps> = ({ isOpen, onCl
   const { t, i18n } = useTranslation(['components']);
   useI18nNamespace('components');
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['epg', 'programs', channelRef],
+    queryKey: epgKeys.programs(channelRef),
     queryFn: () => getEpgPrograms(channelRef, 24),
     enabled: isOpen && channelRef.length > 0,
   });

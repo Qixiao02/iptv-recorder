@@ -18,6 +18,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
+import { auditKeys, configKeys, taskKeys } from '@/lib/queryKeys';
 import type { AppLanguage } from '@/i18n/types';
 import type { SystemConfig } from '@/types';
 import { buildConfigUpdateRequest } from './configPayload';
@@ -110,7 +111,7 @@ export const SettingsPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
 
   const { data: config, isLoading, refetch: refetchConfig } = useQuery({
-    queryKey: ['config'],
+    queryKey: configKeys.config(),
     queryFn: getConfig,
   });
 
@@ -119,7 +120,7 @@ export const SettingsPage: React.FC = () => {
     isLoading: isHealthLoading,
     refetch: refetchSystemHealth,
   } = useQuery({
-    queryKey: ['system', 'health'],
+    queryKey: configKeys.health(),
     queryFn: getSystemHealth,
     enabled: isAdmin,
     refetchInterval: isAdmin ? 30000 : false,
@@ -133,7 +134,7 @@ export const SettingsPage: React.FC = () => {
     isLoading: isAuditLoading,
     refetch: refetchAuditLogs,
   } = useQuery({
-    queryKey: ['audit', 'logs', auditPage, auditPageSize],
+    queryKey: auditKeys.logs(auditPage, auditPageSize),
     queryFn: () => getAuditLogs({ page: auditPage, page_size: auditPageSize }),
     enabled: isAdmin,
     placeholderData: (prev) => prev,
@@ -191,7 +192,7 @@ export const SettingsPage: React.FC = () => {
   const cleanupMutation = useMutation({
     mutationFn: runCleanup,
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       refetchSystemHealth();
       refetchAuditLogs();
       addAlert({

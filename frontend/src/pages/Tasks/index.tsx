@@ -6,6 +6,7 @@ import { getAllChannels } from '@/api/channels';
 import { wsClient, type ConnectionState } from '@/api/websocket';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys, taskKeys } from '@/lib/queryKeys';
 import { formatBytes, formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import {
@@ -56,7 +57,7 @@ export const Tasks: React.FC = () => {
   );
 
   const { data: tasks, isLoading, refetch } = useQuery({
-    queryKey: ['tasks'],
+    queryKey: taskKeys.all(),
     queryFn: getTasks,
     refetchInterval: (query) => {
       const currentTasks = query.state.data as Task[] | undefined;
@@ -66,7 +67,7 @@ export const Tasks: React.FC = () => {
   });
 
   const { data: channels } = useQuery({
-    queryKey: ['channels', 'all'],
+    queryKey: channelKeys.all(),
     queryFn: getAllChannels,
   });
 
@@ -76,7 +77,7 @@ export const Tasks: React.FC = () => {
     wsClient.connect();
 
     const patchTask = (taskId: string, patch: Partial<Task>) => {
-      queryClient.setQueryData<Task[]>(['tasks'], (oldTasks) => {
+      queryClient.setQueryData<Task[]>(taskKeys.all(), (oldTasks) => {
         if (!oldTasks) return oldTasks;
         return oldTasks.map((task) => (
           task.id === taskId
@@ -111,7 +112,7 @@ export const Tasks: React.FC = () => {
         ...(data.status === 'completed' ? { progress_percent: 100 } : {}),
         ...(data.status === 'running' ? {} : { current_speed: null }),
       });
-      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: taskKeys.root });
     });
 
     return () => {
@@ -136,7 +137,7 @@ export const Tasks: React.FC = () => {
   const cancelMutation = useMutation({
     mutationFn: cancelTask,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       toast.success(t('common:toast.taskCancelled'));
     },
     onError: (error) => {
@@ -147,7 +148,7 @@ export const Tasks: React.FC = () => {
   const clearMutation = useMutation({
     mutationFn: clearCompletedTasks,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       setClearConfirm(false);
       toast.success(t('common:toast.tasksCleared'));
     },
@@ -159,7 +160,7 @@ export const Tasks: React.FC = () => {
   const deleteMutation = useMutation({
     mutationFn: deleteTask,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       setDeleteConfirm({ isOpen: false, taskId: null });
       toast.success(t('common:toast.taskDeleted'));
     },

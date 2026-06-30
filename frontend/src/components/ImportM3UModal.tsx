@@ -6,6 +6,7 @@ import { friendlyError } from '@/api/channels';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { X, Upload, Link, FileText, Loader2, CheckCircle, AlertCircle, FileUp } from 'lucide-react';
 import { toast } from '@/stores/toastStore';
+import { channelKeys } from '@/lib/queryKeys';
 import type { ImportM3UResponse } from '@/types';
 import './Modal.css';
 
@@ -38,8 +39,8 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
       setErrorMessage(null);
       setResult(data);
       onImported?.(data);
-      await queryClient.invalidateQueries({ queryKey: ['channels'] });
-      await queryClient.refetchQueries({ queryKey: ['channels'], type: 'active' });
+      await queryClient.invalidateQueries({ queryKey: channelKeys.root });
+      await queryClient.refetchQueries({ queryKey: channelKeys.root, type: 'active' });
     },
     onError: (error) => {
       setErrorMessage(friendlyError(error));
@@ -52,8 +53,8 @@ export const ImportM3UModal: React.FC<ImportM3UModalProps> = ({ isOpen, onClose,
       setErrorMessage(null);
       setResult(data);
       onImported?.(data);
-      await queryClient.invalidateQueries({ queryKey: ['channels'] });
-      await queryClient.refetchQueries({ queryKey: ['channels'], type: 'active' });
+      await queryClient.invalidateQueries({ queryKey: channelKeys.root });
+      await queryClient.refetchQueries({ queryKey: channelKeys.root, type: 'active' });
     },
     onError: (error) => {
       setErrorMessage(friendlyError(error));

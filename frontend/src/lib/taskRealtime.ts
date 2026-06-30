@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { Task, TaskProgressData, TaskUpdateData } from '@/types';
+import { taskKeys } from '@/lib/queryKeys';
 
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -68,7 +69,7 @@ export const patchTaskCache = (
 ): boolean => {
   let changed = false;
 
-  queryClient.setQueryData<Task[]>(['tasks'], (current) => {
+  queryClient.setQueryData<Task[]>(taskKeys.all(), (current) => {
     if (!current) {
       return current;
     }
@@ -81,7 +82,7 @@ export const patchTaskCache = (
 };
 
 export const upsertTaskCache = (queryClient: QueryClient, task: Task): void => {
-  queryClient.setQueryData<Task[]>(['tasks'], (current) => (
+  queryClient.setQueryData<Task[]>(taskKeys.all(), (current) => (
     current ? upsertTaskList(current, task) : [task]
   ));
 };

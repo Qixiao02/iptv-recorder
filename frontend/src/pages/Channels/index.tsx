@@ -5,6 +5,7 @@ import { batchDeleteChannels, getChannels, getChannelGroups, deleteChannel, test
 import { toast } from '@/stores/toastStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys } from '@/lib/queryKeys';
 import {
   Search,
   Plus,
@@ -73,7 +74,7 @@ export const Channels: React.FC = () => {
   }, [selectedGroup, selectedSource]);
 
   const { data: channelsData, isLoading } = useQuery({
-    queryKey: ['channels', page, pageSize, selectedGroup, selectedSource, debouncedSearch],
+    queryKey: channelKeys.list([page, pageSize, selectedGroup, selectedSource, debouncedSearch]),
     queryFn: () => getChannels({
       page,
       page_size: pageSize,
@@ -84,14 +85,14 @@ export const Channels: React.FC = () => {
   });
 
   const { data: groups } = useQuery({
-    queryKey: ['channels', 'groups'],
+    queryKey: channelKeys.groups(),
     queryFn: getChannelGroups,
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteChannel,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelDeleted'));
     },
     onError: (error) => {
@@ -104,7 +105,7 @@ export const Channels: React.FC = () => {
     onSuccess: (result) => {
       const count = result?.deleted ?? selectedChannels.size;
       setSelectedChannels(new Set());
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelsBatchDeleted', { count }));
     },
     onError: (error) => {
@@ -136,7 +137,7 @@ export const Channels: React.FC = () => {
   const testMutation = useMutation({
     mutationFn: testChannel,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelTestOk'));
       setTestingId(null);
     },
@@ -164,7 +165,7 @@ export const Channels: React.FC = () => {
       } catch {
         // Ignore individual test errors and continue testing the rest.
       }
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
     }
 
     setBatchTesting(false);

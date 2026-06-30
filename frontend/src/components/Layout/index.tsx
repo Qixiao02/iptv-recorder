@@ -15,6 +15,7 @@ import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import { getNotifications } from '@/api/notifications';
+import { notificationKeys } from '@/lib/queryKeys';
 import {
   LayoutDashboard,
   Tv,
@@ -72,7 +73,7 @@ export const Layout: React.FC = () => {
 
   // 持久化通知分页查询（铃铛下拉打开时展示）
   const { data: notifData, isFetching: notifLoading } = useQuery({
-    queryKey: ['notifications', notifPage],
+    queryKey: notificationKeys.list(notifPage),
     queryFn: () => getNotifications({ page: notifPage, page_size: 10 }),
     enabled: showAlertMenu,
     placeholderData: (prev) => prev,
@@ -198,7 +199,7 @@ export const Layout: React.FC = () => {
                     // 打开即视为已查看：标记全部已读（持久化）
                     if (persistentUnreadCount > 0) {
                       markAllRead().then(() => {
-                        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                        queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                       });
                     }
                     markAllAlertsRead();
@@ -221,7 +222,7 @@ export const Layout: React.FC = () => {
                           className="alert-clear-btn"
                           onClick={() => {
                             markAllRead().then(() => {
-                              queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                              queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                             });
                           }}
                         >
@@ -243,7 +244,7 @@ export const Layout: React.FC = () => {
                             onClick={() => {
                               if (!n.read) {
                                 markRead(n.id).then(() => {
-                                  queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                                  queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                                 });
                               }
                             }}

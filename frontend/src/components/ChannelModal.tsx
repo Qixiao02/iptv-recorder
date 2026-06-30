@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createChannel, updateChannel } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys } from '@/lib/queryKeys';
 import { X, Loader2 } from 'lucide-react';
 import type { Channel, CreateChannelRequest } from '@/types';
 import './Modal.css';
@@ -50,7 +51,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   const createMutation = useMutation({
     mutationFn: createChannel,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelCreated'));
       handleClose();
     },
@@ -62,7 +63,7 @@ export const ChannelModal: React.FC<ChannelModalProps> = ({ isOpen, onClose, cha
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: CreateChannelRequest }) => updateChannel(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelUpdated'));
       handleClose();
     },

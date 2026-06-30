@@ -6,6 +6,7 @@ import { startManualRecord } from '@/api/tasks';
 import { upsertTaskCache } from '@/lib/taskRealtime';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { scheduleKeys, taskKeys } from '@/lib/queryKeys';
 import {
   Plus,
   CalendarClock,
@@ -73,14 +74,14 @@ export const Schedules: React.FC = () => {
   const [executingId, setExecutingId] = useState<string | null>(null);
 
   const { data: schedules, isLoading } = useQuery({
-    queryKey: ['schedules'],
+    queryKey: scheduleKeys.all(),
     queryFn: getSchedules,
   });
 
   const toggleMutation = useMutation({
     mutationFn: (id: string) => toggleSchedule(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
       toast.success(t('common:toast.scheduleToggled'));
     },
     onError: (error) => {
@@ -91,7 +92,7 @@ export const Schedules: React.FC = () => {
   const deleteMutation = useMutation({
     mutationFn: deleteSchedule,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
       toast.success(t('common:toast.scheduleDeleted'));
     },
     onError: (error) => {
@@ -103,7 +104,7 @@ export const Schedules: React.FC = () => {
     mutationFn: startManualRecord,
     onSuccess: (task) => {
       upsertTaskCache(queryClient, task);
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       toast.success(t('schedules:created'));
       setExecutingId(null);
     },

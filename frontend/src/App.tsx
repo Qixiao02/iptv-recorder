@@ -11,6 +11,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useNotificationStore } from '@/stores/notificationStore';
 import type { Channel, Task, TaskProgressData, TaskUpdateData, ChannelStatusData, SystemAlertData, AppNotification } from '@/types';
 import { applyTaskProgressUpdate, applyTaskStatusUpdate, patchTaskCache } from '@/lib/taskRealtime';
+import { channelKeys, notificationKeys, taskKeys } from '@/lib/queryKeys';
 import '@/locales/index';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -97,19 +98,19 @@ function App() {
     const unsubscribeProgress = wsClient.onTaskProgress((progress: TaskProgressData) => {
       const changed = updateTaskCache((tasks) => applyTaskProgressUpdate(tasks, progress));
       if (!changed) {
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        queryClient.invalidateQueries({ queryKey: taskKeys.root });
       }
     });
 
     const unsubscribeUpdate = wsClient.onTaskUpdate((update: TaskUpdateData) => {
       const changed = updateTaskCache((tasks) => applyTaskStatusUpdate(tasks, update));
       if (!changed || update.status !== 'running') {
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        queryClient.invalidateQueries({ queryKey: taskKeys.root });
       }
     });
 
     const unsubscribeChannelStatus = wsClient.onChannelStatus((update: ChannelStatusData) => {
-      queryClient.setQueriesData({ queryKey: ['channels'] }, (current: unknown) => {
+      queryClient.setQueriesData({ queryKey: channelKeys.root }, (current: unknown) => {
         if (Array.isArray(current)) {
           return current.map((channel) =>
             channel && typeof channel === 'object' && 'id' in channel && (channel as Channel).id === update.channel_id
@@ -146,7 +147,7 @@ function App() {
       // 实时通知：自增未读数；刷新通知列表缓存（让铃铛下拉自动更新，无需手动刷新页面）；
       // 浏览器原生通知（可选）
       onNotificationReceived(n);
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: notificationKeys.root });
       if (Notification.permission === 'granted') {
         new Notification(n.title, { body: n.message });
       }
@@ -154,7 +155,7 @@ function App() {
 
     const unsubscribeConnection = wsClient.onConnectionStateChange((state) => {
       if (state === 'connected') {
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        queryClient.invalidateQueries({ queryKey: taskKeys.root });
       }
     });
 
