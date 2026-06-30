@@ -11,6 +11,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use url::Url;
 
+/// 异步文件系统入口。tokio::fs 把读写交给阻塞线程池,避免在 async 轮询循环里
+/// (wait_for_playlist)用同步 std::fs 卡住 Tokio worker——磁盘压力下会延迟
+/// 其他异步任务(WebSocket 推送、HTTP 响应)。测试模块用各自的 std::fs 建临时文件。
+use tokio::fs as tokio_fs;
+
 /// 转码会话信息
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -883,7 +888,7 @@ async fn wait_for_playlist_ready(
     let deadline = started_at + profile.startup_timeout();
 
     loop {
-        let ready_state = playlist_ready_state(playlist_path, hls_dir, profile);
+        let ready_state = playlist_ready_state(playlist_path, hls_dir, profile).await;
         if ready_state.ready {
             info!(
                 "HLS playlist ready with profile {}: {:?}, segments={}",
@@ -896,7 +901,7 @@ async fn wait_for_playlist_ready(
 
         if let Some(status) = process.try_wait()? {
             let tail = format_log_tail(&stderr_tail);
-            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile);
+            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile).await;
             return Err(anyhow::anyhow!(
                 "FFmpeg 进程提前退出（profile={}, status={}）。{}{}",
                 profile.name(),
@@ -908,7 +913,7 @@ async fn wait_for_playlist_ready(
 
         if Instant::now() >= deadline {
             let tail = format_log_tail(&stderr_tail);
-            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile);
+            let diagnostics = collect_hls_diagnostics(hls_dir, playlist_path, profile).await;
             return Err(anyhow::anyhow!(
                 "等待 HLS 播放列表超时（profile={}, timeout={}s）。{}{}",
                 profile.name(),
@@ -923,16 +928,18 @@ async fn wait_for_playlist_ready(
 }
 
 #[cfg(test)]
-fn playlist_is_ready(path: &PathBuf) -> bool {
-    playlist_ready_state(path, &PathBuf::new(), TranscodeProfile::FastRemux).ready
+async fn playlist_is_ready(path: &PathBuf) -> bool {
+    playlist_ready_state(path, &PathBuf::new(), TranscodeProfile::FastRemux)
+        .await
+        .ready
 }
 
-fn playlist_ready_state(
+async fn playlist_ready_state(
     playlist_path: &PathBuf,
     hls_dir: &PathBuf,
     profile: TranscodeProfile,
 ) -> PlaylistReadyState {
-    let Ok(content) = std::fs::read_to_string(playlist_path) else {
+    let Ok(content) = tokio_fs::read_to_string(playlist_path).await else {
         return PlaylistReadyState {
             ready: false,
             segment_count: 0,
@@ -947,7 +954,7 @@ fn playlist_ready_state(
     }
 
     let playlist_segments = content.matches("#EXTINF:").count();
-    let file_segments = count_hls_segments(hls_dir, profile);
+    let file_segments = count_hls_segments(hls_dir, profile).await;
     let segment_count = playlist_segments.max(file_segments);
     let has_segment_reference = content.contains("segment_")
         || (content.contains("#EXT-X-MAP") && content.contains("init.mp4"));
@@ -958,18 +965,23 @@ fn playlist_ready_state(
     }
 }
 
-fn count_hls_segments(hls_dir: &PathBuf, profile: TranscodeProfile) -> usize {
-    std::fs::read_dir(hls_dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(profile.segment_extension())
-        })
-        .count()
+async fn count_hls_segments(hls_dir: &PathBuf, profile: TranscodeProfile) -> usize {
+    // tokio::fs::read_dir 返回异步迭代器,用 next_entry().await 逐项读取,
+    // 不阻塞 Tokio worker(对照原先 std::fs::read_dir 同步迭代)。
+    let Ok(mut entries) = tokio_fs::read_dir(hls_dir).await else {
+        return 0;
+    };
+    let mut count = 0;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .ends_with(profile.segment_extension())
+        {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn format_log_tail(stderr_tail: &Arc<std::sync::Mutex<VecDeque<String>>>) -> String {
@@ -995,29 +1007,31 @@ fn format_log_tail(stderr_tail: &Arc<std::sync::Mutex<VecDeque<String>>>) -> Str
     )
 }
 
-fn collect_hls_diagnostics(
+async fn collect_hls_diagnostics(
     hls_dir: &PathBuf,
     playlist_path: &PathBuf,
     profile: TranscodeProfile,
 ) -> String {
     let mut parts = Vec::new();
 
-    let playlist_exists = playlist_path.exists();
+    let playlist_exists = tokio_fs::try_exists(playlist_path).await.unwrap_or(false);
     parts.push(format!(" playlist_exists={playlist_exists}"));
 
-    if let Ok(content) = std::fs::read_to_string(playlist_path) {
+    if let Ok(content) = tokio_fs::read_to_string(playlist_path).await {
         let preview = content.lines().take(8).collect::<Vec<_>>().join(" || ");
         if !preview.is_empty() {
             parts.push(format!(" playlist_preview={preview:?}"));
         }
     }
 
-    let init_exists = hls_dir.join("init.mp4").exists();
+    let init_exists = tokio_fs::try_exists(&hls_dir.join("init.mp4"))
+        .await
+        .unwrap_or(false);
     if matches!(profile, TranscodeProfile::StableFmp4) {
         parts.push(format!(" init_exists={init_exists}"));
     }
 
-    let segment_count = count_hls_segments(hls_dir, profile);
+    let segment_count = count_hls_segments(hls_dir, profile).await;
     parts.push(format!(" segment_count={segment_count}"));
 
     if playlist_exists && segment_count == 0 {
@@ -1050,8 +1064,8 @@ mod tests {
         std::env::temp_dir().join(format!("iptv-recorder-{}-{}", name, Uuid::new_v4()))
     }
 
-    #[test]
-    fn playlist_ready_requires_manifest_and_segment() {
+    #[tokio::test]
+    async fn playlist_ready_requires_manifest_and_segment() {
         let path = temp_playlist_path("playlist-ready");
         fs::write(
             &path,
@@ -1059,17 +1073,17 @@ mod tests {
         )
         .expect("write playlist");
 
-        assert!(playlist_is_ready(&path));
+        assert!(playlist_is_ready(&path).await);
 
         let _ = fs::remove_file(path);
     }
 
-    #[test]
-    fn playlist_ready_rejects_empty_manifest() {
+    #[tokio::test]
+    async fn playlist_ready_rejects_empty_manifest() {
         let path = temp_playlist_path("playlist-empty");
         fs::write(&path, "#EXTM3U\n#EXT-X-VERSION:7\n").expect("write playlist");
 
-        assert!(!playlist_is_ready(&path));
+        assert!(!playlist_is_ready(&path).await);
 
         let _ = fs::remove_file(path);
     }
