@@ -823,7 +823,7 @@ pub async fn list_server_directories(
         }));
     }
 
-    let metadata = std::fs::metadata(&target).map_err(|e| {
+    let metadata = tokio::fs::metadata(&target).await.map_err(|e| {
         internal_error(anyhow::anyhow!(
             "无法读取服务器目录 {}: {}",
             target.display(),
@@ -838,7 +838,9 @@ pub async fn list_server_directories(
     }
 
     let mut entries = Vec::new();
-    let read_dir = std::fs::read_dir(&target).map_err(|e| {
+    // tokio::fs::read_dir 返回异步迭代器,用 next_entry().await 逐项读取,
+    // 不阻塞 Tokio worker(对照原先 std::fs::read_dir 同步迭代)。
+    let mut read_dir = tokio::fs::read_dir(&target).await.map_err(|e| {
         internal_error(anyhow::anyhow!(
             "无法列出服务器目录 {}: {}",
             target.display(),
@@ -846,9 +848,15 @@ pub async fn list_server_directories(
         ))
     })?;
 
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let file_type = entry.file_type().await;
+        let is_dir = match file_type {
+            Ok(ft) => ft.is_dir(),
+            // 无法判定类型时回退:取路径再 stat(慢路径,极少触发)
+            Err(_) => entry.path().is_dir(),
+        };
+        if is_dir {
+            let path = entry.path();
             entries.push(DirectoryEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
                 path: path.to_string_lossy().to_string(),
