@@ -27,13 +27,13 @@
 #   5) 访问 http://<服务器IP>:5669,用 .env 里的初始密码登录 admin
 #
 # 录制到 NAS 指定目录:
-#   本 compose 以 root 运行,默认挂载 /:/mnt/host(整个宿主根)。
-#   在 Web UI「设置 > 存储」点「选择目录」,从 /mnt/host 开始浏览,
-#   选中想要的目录(如 /mnt/host/vol00/recordings)后保存即可。
-#   因容器 root 身份,可读写宿主机任意已挂载目录,无需额外 chmod。
-#   【按需改挂载】若不想挂整个根,改下方 volumes 的 /:/mnt/host 行:
-#        - /vol00:/mnt/host/vol00           # 只挂某个存储卷
-#        - /mnt/sata1:/mnt/host/sata1       # 或具体硬盘
+#   本 compose 以 root 运行,但挂载收紧为只挂存储卷(不挂整个根 / ),
+#   避免暴露 /etc /root /var 等系统敏感目录。
+#   飞牛(fnOS)存储池一般在 /vol00 /vol01 ...(NAS 上 `ls -d /vol*` 确认),
+#   已映射到容器内 /mnt/host/vol00 等。在 Web UI「设置 > 存储」点「选择目录」,
+#   从 /mnt/host 开始浏览,选中想要的目录后保存即可。
+#   因容器 root 身份,可读写已挂载的存储卷,无需额外 chmod。
+#   【加盘】若要新增存储卷,在下方 volumes 增一行 `- /你的路径:/mnt/host/你的路径`。
 #
 # 升级到新版本:
 #   - 传新版本 tar(如 iptv-recorder-0.1.8.tar)
@@ -72,10 +72,16 @@ services:
       # 宿主机存储卷映射:让 Web UI「设置 > 存储」能浏览并选择宿主机路径。
       # 容器以 root 运行,可读写任意已挂载目录,无需额外 chmod。
       #
-      # 默认挂载整个根(可访问任意宿主路径)。按需改成精确挂载:
-      #   - /vol00:/mnt/host/vol00
-      #   - /mnt/sata1:/mnt/host/sata1
-      - /:/mnt/host
+      # 【收紧挂载】只挂存储卷,不挂整个根 / ——避免暴露 /etc /root /var 等敏感目录。
+      # 飞牛(fnOS)存储池一般在 /vol*(用 `ls -d /vol*` 在 NAS 上确认实际有哪些),
+      # 按实际情况取消注释 / 增删。映射后容器内路径为 /mnt/host/<同名>。
+      # 例:宿主 /vol00 → 容器 /mnt/host/vol00,Web UI 选目录时看到的就是这个路径。
+      - /vol00:/mnt/host/vol00
+      # - /vol01:/mnt/host/vol01
+      # - /vol02:/mnt/host/vol02
+      # 若你的盘在别的位置(群晖常在 /volume*、自定义挂载点),改成对应路径,如:
+      # - /volume1:/mnt/host/volume1
+      # - /mnt/sata1:/mnt/host/sata1
       # ──────────────────────────────────────────────────────────────
     networks:
       - iptv-net
