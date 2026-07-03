@@ -10,7 +10,7 @@
 #   3) 浏览器访问 http://localhost:3033
 #
 # 导出镜像(分发/备份):
-#   docker save iptv-recorder:0.1.6 -o iptv-recorder-0.1.6.tar
+#   docker save iptv-recorder:0.1.7 -o iptv-recorder-0.1.7.tar
 #
 # 在另一台机器加载镜像并启动(无需源码):
 #   docker load -i iptv-recorder-0.1.6.tar
@@ -20,7 +20,7 @@ services:
   iptv-recorder:
     # 镜像 tag:与 build 同时指定时,构建产物会打上此 tag;不构建时(docker compose pull)
     # 也用此 tag 拉取。版本号变更时同步更新此处(及 Cargo.toml / package.json / i18n)。
-    image: iptv-recorder:0.1.6
+    image: iptv-recorder:0.1.7
     build:
       context: .
       dockerfile: Dockerfile

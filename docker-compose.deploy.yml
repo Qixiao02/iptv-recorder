@@ -7,13 +7,13 @@
 #
 # 部署步骤:
 #   1) 把这三个文件传到服务器同一目录:
-#        - iptv-recorder-0.1.6.tar          (镜像)
-#        - iptv-recorder-0.1.6.tar.sha256   (校验和,可选)
+#        - iptv-recorder-0.1.7.tar          (镜像)
+#        - iptv-recorder-0.1.7.tar.sha256   (校验和,可选)
 #        - docker-compose.deploy.yml        (本文件)
 #   2) 在服务器上:
-#        docker load -i iptv-recorder-0.1.6.tar
+#        docker load -i iptv-recorder-0.1.7.tar
 #        # (可选)校验完整性:
-#        sha256sum -c iptv-recorder-0.1.6.tar.sha256
+#        sha256sum -c iptv-recorder-0.1.7.tar.sha256
 #
 #   3) 生成 .env(密钥 + 初始密码):
 #        # 手动创建 .env,内容见下方注释;或用项目 scripts/generate-env.sh
@@ -34,7 +34,7 @@
 
 services:
   iptv-recorder:
-    image: iptv-recorder:0.1.6
+    image: iptv-recorder:0.1.7
     container_name: iptv-recorder
     restart: unless-stopped
     env_file:
