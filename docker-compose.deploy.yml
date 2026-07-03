@@ -3,7 +3,9 @@
 # 与 docker-compose.yml 的区别:
 #   - 只有 image:,无 build: —— 绝不触发本地构建,纯靠 docker load 加载的镜像
 #   - 数据卷用绝对路径 ./data(不依赖源码目录结构)
-#   - 宿主路径挂载默认用 Linux 整盘映射(按需改)
+#   - 以 root 运行 + 挂载宿主机存储卷,可直接录制到 NAS 任意目录
+#     (镜像本身以非 root 设计;此 compose 为 NAS 部署便利放开权限,
+#      安全边界低于源码版,适合可信内网 NAS)
 #
 # 部署步骤:
 #   1) 把这三个文件传到服务器同一目录:
@@ -16,20 +18,27 @@
 #        sha256sum -c iptv-recorder-0.1.7.tar.sha256
 #
 #   3) 生成 .env(密钥 + 初始密码):
-#        # 手动创建 .env,内容见下方注释;或用项目 scripts/generate-env.sh
-#        # 必须包含:
-#        #   IPTV_JWT_SECRET=<至少32字符随机串>     例:openssl rand -hex 32
-#        #   IPTV_INITIAL_ADMIN_PASSWORD=<初始密码>
+#        echo "IPTV_JWT_SECRET=$(openssl rand -hex 32)" > .env
+#        echo "IPTV_INITIAL_ADMIN_PASSWORD=你的强密码" >> .env
 #
 #   4) 启动:
 #        docker compose -f docker-compose.deploy.yml up -d
 #
 #   5) 访问 http://<服务器IP>:5669,用 .env 里的初始密码登录 admin
 #
+# 录制到 NAS 指定目录:
+#   本 compose 以 root 运行,默认挂载 /:/mnt/host(整个宿主根)。
+#   在 Web UI「设置 > 存储」点「选择目录」,从 /mnt/host 开始浏览,
+#   选中想要的目录(如 /mnt/host/vol00/recordings)后保存即可。
+#   因容器 root 身份,可读写宿主机任意已挂载目录,无需额外 chmod。
+#   【按需改挂载】若不想挂整个根,改下方 volumes 的 /:/mnt/host 行:
+#        - /vol00:/mnt/host/vol00           # 只挂某个存储卷
+#        - /mnt/sata1:/mnt/host/sata1       # 或具体硬盘
+#
 # 升级到新版本:
-#   - 传新版本 tar(如 iptv-recorder-0.1.7.tar)
-#   - docker load -i iptv-recorder-0.1.7.tar
-#   - 改本文件的 image: tag 为 0.1.7
+#   - 传新版本 tar(如 iptv-recorder-0.1.8.tar)
+#   - docker load -i iptv-recorder-0.1.8.tar
+#   - 改本文件的 image: tag 为 0.1.8
 #   - docker compose -f docker-compose.deploy.yml up -d   (自动重建容器,数据保留)
 
 services:
@@ -37,10 +46,12 @@ services:
     image: iptv-recorder:0.1.7
     container_name: iptv-recorder
     restart: unless-stopped
+    # 以 root 运行:让容器能直接读写宿主机挂载进来的存储卷(NAS 部署便利)。
+    # 镜像内默认是非 root app 用户;此覆盖放开权限,等同飞牛/群晖上多数自部署应用。
+    user: "0:0"
     env_file:
       - path: .env
         required: false
-    ports:
     ports:
       - "5669:3000"
     environment:
@@ -54,23 +65,17 @@ services:
       IPTV__RECORDER__EXECUTABLE: N_m3u8DL-RE
       IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH: ffmpeg
       # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     volumes:
-      # 数据持久化:数据库 + 录制文件 + 临时目录。重建容器不丢数据。
+      # 数据持久化:数据库 + 默认录制目录 + 临时目录。重建容器不丢数据。
       - ./data:/app/data
       # ──────────────────────────────────────────────────────────────
-      # 宿主机路径映射:让 Web UI「设置 > 存储」能浏览并选择宿主机路径。
-      # 按服务器实际情况改(取消注释 / 调整路径)。
+      # 宿主机存储卷映射:让 Web UI「设置 > 存储」能浏览并选择宿主机路径。
+      # 容器以 root 运行,可读写任意已挂载目录,无需额外 chmod。
       #
-      # 【常用】挂载整个根目录(可访问任意宿主路径,安全边界较低):
+      # 默认挂载整个根(可访问任意宿主路径)。按需改成精确挂载:
+      #   - /vol00:/mnt/host/vol00
+      #   - /mnt/sata1:/mnt/host/sata1
       - /:/mnt/host
-      #
-      # 【更安全】按需按目录挂载(把上面一行注释掉,启用下面需要的):
-      # - /home:/mnt/host/home
-      # - /mnt/nas:/mnt/host/nas          # 网络盘先在宿主机挂载,再映射进容器
       # ──────────────────────────────────────────────────────────────
     networks:
       - iptv-net
