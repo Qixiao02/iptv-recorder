@@ -24,7 +24,7 @@
 #   4) 启动:
 #        docker compose -f docker-compose.deploy.yml up -d
 #
-#   5) 访问 http://<服务器IP>:3033,用 .env 里的初始密码登录 admin
+#   5) 访问 http://<服务器IP>:5669,用 .env 里的初始密码登录 admin
 #
 # 升级到新版本:
 #   - 传新版本 tar(如 iptv-recorder-0.1.7.tar)
@@ -41,7 +41,8 @@ services:
       - path: .env
         required: false
     ports:
-      - "3033:3000"
+    ports:
+      - "5669:3000"
     environment:
       RUST_LOG: info
       IPTV__SERVER__HOST: 0.0.0.0
