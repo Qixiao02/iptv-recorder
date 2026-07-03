@@ -1,0 +1,85 @@
+# IPTV Recorder —— 服务器部署专用 compose(无需源码,使用预构建镜像)
+#
+# 与 docker-compose.yml 的区别:
+#   - 只有 image:,无 build: —— 绝不触发本地构建,纯靠 docker load 加载的镜像
+#   - 数据卷用绝对路径 ./data(不依赖源码目录结构)
+#   - 宿主路径挂载默认用 Linux 整盘映射(按需改)
+#
+# 部署步骤:
+#   1) 把这三个文件传到服务器同一目录:
+#        - iptv-recorder-0.1.7.tar          (镜像)
+#        - iptv-recorder-0.1.7.tar.sha256   (校验和,可选)
+#        - docker-compose.deploy.yml        (本文件)
+#   2) 在服务器上:
+#        docker load -i iptv-recorder-0.1.7.tar
+#        # (可选)校验完整性:
+#        sha256sum -c iptv-recorder-0.1.7.tar.sha256
+#
+#   3) 生成 .env(密钥 + 初始密码):
+#        # 手动创建 .env,内容见下方注释;或用项目 scripts/generate-env.sh
+#        # 必须包含:
+#        #   IPTV_JWT_SECRET=<至少32字符随机串>     例:openssl rand -hex 32
+#        #   IPTV_INITIAL_ADMIN_PASSWORD=<初始密码>
+#
+#   4) 启动:
+#        docker compose -f docker-compose.deploy.yml up -d
+#
+#   5) 访问 http://<服务器IP>:3033,用 .env 里的初始密码登录 admin
+#
+# 升级到新版本:
+#   - 传新版本 tar(如 iptv-recorder-0.1.7.tar)
+#   - docker load -i iptv-recorder-0.1.7.tar
+#   - 改本文件的 image: tag 为 0.1.7
+#   - docker compose -f docker-compose.deploy.yml up -d   (自动重建容器,数据保留)
+
+services:
+  iptv-recorder:
+    image: iptv-recorder:0.1.7
+    container_name: iptv-recorder
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "3033:3000"
+    environment:
+      RUST_LOG: info
+      IPTV__SERVER__HOST: 0.0.0.0
+      IPTV__SERVER__PORT: 3000
+      IPTV__DATABASE__PATH: /app/data/iptv-recorder.db
+      IPTV__STORAGE__RECORDINGS_DIR: /app/data/recordings
+      IPTV__STORAGE__TEMP_DIR: /app/data/.tmp
+      IPTV__STORAGE__PREVIEW_TEMP_DIR: /dev/shm/iptv-recorder-hls
+      IPTV__RECORDER__EXECUTABLE: N_m3u8DL-RE
+      IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH: ffmpeg
+      # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      # 数据持久化:数据库 + 录制文件 + 临时目录。重建容器不丢数据。
+      - ./data:/app/data
+      # ──────────────────────────────────────────────────────────────
+      # 宿主机路径映射:让 Web UI「设置 > 存储」能浏览并选择宿主机路径。
+      # 按服务器实际情况改(取消注释 / 调整路径)。
+      #
+      # 【常用】挂载整个根目录(可访问任意宿主路径,安全边界较低):
+      - /:/mnt/host
+      #
+      # 【更安全】按需按目录挂载(把上面一行注释掉,启用下面需要的):
+      # - /home:/mnt/host/home
+      # - /mnt/nas:/mnt/host/nas          # 网络盘先在宿主机挂载,再映射进容器
+      # ──────────────────────────────────────────────────────────────
+    networks:
+      - iptv-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+networks:
+  iptv-net:
+    driver: bridge

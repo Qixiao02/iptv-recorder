@@ -5,7 +5,7 @@ use crate::{
         Event, EventSender, TaskProgressEvent, TaskStatus as EventTaskStatus, TaskUpdateEvent,
     },
     core::process::{ProcessManager, RecordingConfig, RecordingEngine},
-    models::{Channel, ManualRecordRequest, Task},
+    models::{Channel, ManualRecordRequest, PaginatedTasks, Task, TaskListItem, TaskListParams},
     services::{
         notification::{
             category as notif_cat, level as notif_lvl, NotificationService, NotifyRequest,
@@ -15,6 +15,7 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::Utc;
+use sqlx::Row;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
@@ -627,13 +628,82 @@ impl RecordingService {
         Ok(task)
     }
 
-    /// 获取所有任务
+    /// 获取所有任务(无分页)。保留供内部/兼容用途,HTTP 列表接口已改用
+    /// list_tasks_paginated(分页 + 状态筛选 + channel_name)。
+    #[allow(dead_code)]
     pub async fn list_tasks(&self) -> Result<Vec<Task>> {
         let tasks = sqlx::query_as::<_, Task>("SELECT * FROM tasks ORDER BY created_at DESC")
             .fetch_all(&self.ctx.db)
             .await?;
 
         Ok(tasks)
+    }
+
+    /// 分页查询任务列表(支持状态筛选 + JOIN channel_name)。
+    ///
+    /// 与 `list_tasks` 的差异:
+    /// 1) 分页(LIMIT/OFFSET),不再一次性返回全部历史任务——任务表会随时间无限增长,
+    ///    每次 WS 任务状态变化都触发的全量重拉会成为性能瓶颈;
+    /// 2) LEFT JOIN channels 带 channel_name,前端无需再为查频道名发一次全量频道请求;
+    /// 3) 可按 status 筛选,状态 tab 下推到 DB 层,减少传输与前端过滤。
+    ///
+    /// 返回 PaginatedTasks 信封(items/total/page/page_size/total_pages),
+    /// 与 PaginatedChannels 结构对齐,前端可复用分页控件。
+    pub async fn list_tasks_paginated(
+        &self,
+        params: TaskListParams,
+    ) -> Result<PaginatedTasks> {
+        let page = params.page.unwrap_or(1).max(1);
+        let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
+        let offset = (page - 1) * page_size;
+
+        // 状态筛选:空 / "all" 不筛选,其余按字面匹配(running/completed/failed/...)
+        let (where_sql, status_filter): (&str, Option<&str>) = match &params.status {
+            Some(s) if !s.is_empty() && s != "all" => ("WHERE t.status = ?", Some(s.as_str())),
+            _ => ("", None),
+        };
+
+        // 总数
+        let count_sql = format!("SELECT COUNT(*) as count FROM tasks t {where_sql}");
+        let mut count_query = sqlx::query(&count_sql);
+        if let Some(s) = status_filter {
+            count_query = count_query.bind(s);
+        }
+        let total: i64 = count_query
+            .fetch_one(&self.ctx.db)
+            .await?
+            .get("count");
+
+        // 分页数据:JOIN channels 取频道名。created_at 已有索引(0009),排序走索引。
+        let data_sql = format!(
+            "SELECT t.*, c.name AS channel_name \
+             FROM tasks t LEFT JOIN channels c ON c.id = t.channel_id \
+             {where_sql} \
+             ORDER BY t.created_at DESC LIMIT ? OFFSET ?"
+        );
+        let mut data_query = sqlx::query_as::<_, TaskListItem>(&data_sql);
+        if let Some(s) = status_filter {
+            data_query = data_query.bind(s);
+        }
+        let items = data_query
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(&self.ctx.db)
+            .await?;
+
+        let total_pages = if page_size == 0 {
+            0
+        } else {
+            (total + page_size - 1) / page_size
+        };
+
+        Ok(PaginatedTasks {
+            items,
+            total,
+            page,
+            page_size,
+            total_pages,
+        })
     }
 
     /// 获取运行中的任务
@@ -644,6 +714,106 @@ impl RecordingService {
             .await?;
 
         Ok(tasks)
+    }
+
+    /// 启动恢复：把上次进程残留的 running 任务批量标记为 failed。
+    ///
+    /// **调用时机**：`main.rs` 启动序列中，数据库初始化之后、Cron 调度器启动之前。
+    ///
+    /// **为什么需要**：录制进度的 3 秒心跳由一个后台监控任务负责，后端一旦重启，
+    /// 该监控任务随之死亡，而 DB 里这些任务的 status 仍是 'running'。更糟的是
+    /// migration 0006 的部分唯一索引会让僵尸 running 行永久占用该频道/计划的
+    /// 录制名额（admit_recording 会拒绝同频道再录），导致"重启后这个台再也录不了"。
+    ///
+    /// 此方法在启动时一次性清理：所有 running 任务 → failed，带明确原因，
+    /// 既释放唯一索引名额，也避免用户看到"卡死的运行中任务"。
+    ///
+    /// 由于本进程刚启动，ProcessManager 内存表为空，残留任务对应的 OS 进程
+    /// 对本进程而言已不存在（可能已被系统回收，或成为孤儿），这里只改 DB 状态。
+    pub async fn reconcile_orphaned_tasks(&self) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let reason = "后端重启，录制监控中断（任务已被自动标记为失败）";
+
+        // 先查出来，用于发通知 + 日志（UPDATE 只返回行数）
+        let orphans: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, channel_id, schedule_id FROM tasks WHERE status = 'running'",
+        )
+        .fetch_all(&self.ctx.db)
+        .await?;
+
+        if orphans.is_empty() {
+            return Ok(());
+        }
+
+        let count = orphans.len();
+        info!(
+            "🧟 启动恢复：发现 {} 个上次进程残留的 running 任务，将标记为失败",
+            count
+        );
+
+        // 批量置为 failed。无需 WHERE status='running' 守卫——这些是启动时刻的孤儿，
+        // 本进程还没开始任何录制，不存在与其它路径的竞态。
+        let result = sqlx::query(
+            r#"
+            UPDATE tasks
+            SET status = 'failed', ended_at = ?, error_message = ?, updated_at = ?
+            WHERE status = 'running'
+            "#,
+        )
+        .bind(&now)
+        .bind(reason)
+        .bind(&now)
+        .execute(&self.ctx.db)
+        .await?;
+
+        let affected = result.rows_affected();
+        info!(
+            "🧟 启动恢复完成：{} 个僵尸任务已标记失败（DB 受影响行数 {}）",
+            count, affected
+        );
+
+        // 为每个僵尸任务发事件 + 通知，让前端实时变红、释放名额、留痕
+        for (task_id, channel_id, _schedule_id) in &orphans {
+            // 推 WebSocket 事件，前端任务列表立即更新
+            if let Some(ref sender) = self.event_sender {
+                let _ = sender.send(Event::TaskUpdate(TaskUpdateEvent {
+                    task_id: task_id.clone(),
+                    status: EventTaskStatus::Failed,
+                    error_message: Some(reason.to_string()),
+                }));
+            }
+
+            // 查频道名用于通知文案
+            let channel_name = self
+                .get_channel(channel_id)
+                .await
+                .map(|c| c.name)
+                .unwrap_or_else(|_| "未知频道".to_string());
+
+            notify_terminal_task(
+                self.ctx.clone(),
+                self.event_sender.clone(),
+                None, // 启动恢复不受 on_failure 开关控制——这是强制清理，必须留痕
+                notif_cat::RECORDING_FAILED,
+                notif_lvl::WARNING,
+                format!("录制已中断: {}", channel_name),
+                format!(
+                    "频道「{}」的录制因后端重启而中断，已自动标记为失败。如需继续，请重新发起录制",
+                    channel_name
+                ),
+                Some(
+                    serde_json::json!({
+                        "channel": channel_name,
+                        "reason": "backend_restart",
+                    })
+                    .to_string(),
+                ),
+                task_id.clone(),
+            )
+            .await;
+        }
+
+        Ok(())
     }
 
     /// 取消任务
@@ -2450,5 +2620,90 @@ mod tests {
         let ch = sample_channel("公网台", "http://example.com/live.m3u8", "G", "public");
         let out = RecordingService::render_output_template("{source}", &ch);
         assert_eq!(out, "public");
+    }
+
+    /// list_tasks_paginated:验证分页、状态筛选与 channel_name JOIN。
+    #[tokio::test]
+    async fn list_tasks_paginated_filters_by_status_and_joins_channel_name() {
+        let (service, db_path) = test_service("recording-tasks-pagination").await;
+
+        // channel-1 已由 test_service 预置(名"测试频道")。再插几条不同状态的 task。
+        for (id, status) in [
+            ("t-running", "running"),
+            ("t-done", "completed"),
+            ("t-fail", "failed"),
+            ("t-fail2", "failed"),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO tasks (id, channel_id, status, created_at, updated_at)
+                VALUES (?, 'channel-1', ?, datetime('now'), datetime('now'))
+                "#,
+            )
+            .bind(id)
+            .bind(status)
+            .execute(&service.ctx.db)
+            .await
+            .expect("insert task");
+        }
+
+        // 1) 无筛选:total=4,默认首页
+        let all = service
+            .list_tasks_paginated(TaskListParams::default())
+            .await
+            .expect("list all");
+        assert_eq!(all.total, 4);
+        assert_eq!(all.items.len(), 4);
+        assert_eq!(all.page, 1);
+        // channel_name 应被 JOIN 带出
+        assert_eq!(all.items[0].channel_name.as_deref(), Some("测试频道"));
+
+        // 2) 状态筛选 status=failed:total=2
+        let failed = service
+            .list_tasks_paginated(TaskListParams {
+                status: Some("failed".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list failed");
+        assert_eq!(failed.total, 2);
+        assert!(failed.items.iter().all(|t| t.status == "failed"));
+
+        // 3) 分页:page_size=2 page=1 → 2 项;page=2 → 2 项
+        let p1 = service
+            .list_tasks_paginated(TaskListParams {
+                page_size: Some(2),
+                page: Some(1),
+                ..Default::default()
+            })
+            .await
+            .expect("page 1");
+        assert_eq!(p1.items.len(), 2);
+        assert_eq!(p1.total_pages, 2);
+
+        let p2 = service
+            .list_tasks_paginated(TaskListParams {
+                page_size: Some(2),
+                page: Some(2),
+                ..Default::default()
+            })
+            .await
+            .expect("page 2");
+        assert_eq!(p2.items.len(), 2);
+        // 两页 id 互不重叠
+        let p1_ids: Vec<_> = p1.items.iter().map(|t| t.id.as_str()).collect();
+        assert!(p2.items.iter().all(|t| !p1_ids.contains(&t.id.as_str())));
+
+        // 4) status="all" 等同无筛选
+        let all_filter = service
+            .list_tasks_paginated(TaskListParams {
+                status: Some("all".to_string()),
+                ..Default::default()
+            })
+            .await
+            .expect("list all via filter");
+        assert_eq!(all_filter.total, 4);
+
+        let _ = tokio::fs::remove_file(db_path).await;
     }
 }

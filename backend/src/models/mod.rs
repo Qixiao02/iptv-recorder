@@ -259,6 +259,58 @@ pub struct Task {
     pub updated_at: String,
 }
 
+/// 任务列表项:在 Task 基础上附带频道名(列表接口 JOIN channels 取,免去前端
+/// 再发一次全量频道请求只为查 channel_id→name)。单任务/其他 SELECT * 路径
+/// 不携带 channel_name,因此用独立结构体而非污染 Task 的 FromRow 映射。
+///
+/// 注意:sqlx 的 FromRow 不支持嵌套结构的 flatten,故显式平铺所有 Task 字段 +
+/// channel_name,JSON 输出与 Task 完全兼容(前端可按 Task 读,channel_name 可选)。
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct TaskListItem {
+    pub id: String,
+    pub schedule_id: Option<String>,
+    pub channel_id: String,
+    #[serde(default)]
+    pub status: String,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub exit_code: Option<i32>,
+    pub error_message: Option<String>,
+    pub output_path: Option<String>,
+    #[serde(default)]
+    pub file_size: i64,
+    #[serde(default)]
+    pub duration_recorded: i64,
+    #[serde(default)]
+    pub progress_percent: i32,
+    pub current_speed: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// JOIN channels.name 得到。channel_id 外键是 ON DELETE CASCADE,频道删除时
+    /// 任务一并删除,故 LEFT JOIN 下非空,留 Option 仅作防御兜底。
+    pub channel_name: Option<String>,
+}
+
+/// 任务列表查询参数(分页 + 状态筛选)
+#[derive(Debug, Default, Deserialize)]
+pub struct TaskListParams {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    /// 状态筛选:running/completed/failed/cancelled/pending。为空/`all` 时不筛选。
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// 分页任务列表(信封),与 PaginatedChannels 结构对齐
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaginatedTasks {
+    pub items: Vec<TaskListItem>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
+}
+
 /// 手动录制请求
 #[derive(Debug, Deserialize)]
 pub struct ManualRecordRequest {

@@ -35,6 +35,8 @@ pub struct RecordingConfigResponse {
     pub n_m3u8dl_re_path: String,
     pub max_retry: u32,
     pub thread_count: u32,
+    /// 录制任务僵尸检测阈值（秒）：running 任务超过该时长未更新进度则判定僵死并清理。
+    pub task_stale_timeout_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +70,7 @@ pub struct RecordingConfigUpdate {
     pub n_m3u8dl_re_path: Option<String>,
     pub max_retry: Option<u32>,
     pub thread_count: Option<u32>,
+    pub task_stale_timeout_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,6 +116,9 @@ impl ConfigService {
                 .await?,
             max_retry: self.get_value("recording.max_retry", 3).await?,
             thread_count: self.get_value("recording.thread_count", 4).await?,
+            task_stale_timeout_secs: self
+                .get_value("task_stale_timeout_secs", 90)
+                .await?,
         };
 
         let notification = NotificationConfigResponse {
@@ -162,6 +168,15 @@ impl ConfigService {
                     return Err(anyhow::anyhow!("thread_count 必须在 1-32 之间"));
                 }
             }
+            if let Some(secs) = recording.task_stale_timeout_secs {
+                // 下限 30s（10 次心跳），避免误配过低把正常录制当僵尸杀掉。
+                // 上限 3600s（1 小时），过久则失去僵尸清理的意义。
+                if !(30..=3600).contains(&secs) {
+                    return Err(anyhow::anyhow!(
+                        "task_stale_timeout_secs 必须在 30-3600 秒之间"
+                    ));
+                }
+            }
         }
 
         // 更新存储配置
@@ -195,6 +210,10 @@ impl ConfigService {
             }
             if let Some(v) = recording.thread_count {
                 self.set_value("recording.thread_count", &v.to_string())
+                    .await?;
+            }
+            if let Some(v) = recording.task_stale_timeout_secs {
+                self.set_value("task_stale_timeout_secs", &v.to_string())
                     .await?;
             }
         }

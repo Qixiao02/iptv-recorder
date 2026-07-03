@@ -1,6 +1,6 @@
 [package]
 name = "iptv-recorder"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 authors = ["IPTV Recorder Team"]
 description = "IPTV M3U management and scheduled recording system"
@@ -13,7 +13,7 @@ path = "src/main.rs"
 # Web framework
 axum = { version = "0.8", features = ["multipart", "ws", "macros"] }
 tower = { version = "0.5", features = ["full"] }
-tower-http = { version = "0.6", features = ["fs", "cors", "trace", "compression-br", "set-header"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace", "compression-br", "compression-gzip", "compression-deflate", "set-header"] }
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = "0.1"
 
@@ -41,7 +41,7 @@ tokio-cron-scheduler = "0.12"
 cron = "0.12"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "cookies", "socks"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "socks", "stream"] }
 
 # Logging
 tracing = "0.1"

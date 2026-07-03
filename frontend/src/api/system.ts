@@ -13,6 +13,7 @@ export interface ConfigUpdateRequest {
     n_m3u8dl_re_path?: string;
     max_retry?: number;
     thread_count?: number;
+    task_stale_timeout_secs?: number;
   };
   notification?: {
     on_complete?: boolean;

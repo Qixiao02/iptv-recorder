@@ -5,6 +5,10 @@ export default {
     schedules: '录制计划',
     tasks: '录制任务',
     settings: '系统设置',
+    openMenu: '打开导航菜单',
+    closeMenu: '关闭导航菜单',
+    expand: '展开侧边栏',
+    collapse: '收起侧边栏',
   },
   theme: {
     switchToLight: '切换到亮色模式',

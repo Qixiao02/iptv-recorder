@@ -15,6 +15,7 @@ import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
 import type { AppLanguage } from '@/i18n/types';
 import { getNotifications } from '@/api/notifications';
+import { notificationKeys } from '@/lib/queryKeys';
 import {
   LayoutDashboard,
   Tv,
@@ -62,6 +63,8 @@ export const Layout: React.FC = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAlertMenu, setShowAlertMenu] = useState(false);
   const [notifPage, setNotifPage] = useState(1);
+  // 移动端侧边栏抽屉开关(≤768px 才显示汉堡按钮)。桌面端侧边栏始终可见,与此状态无关。
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const alertMenuRef = useRef<HTMLDivElement>(null);
   const unreadAlertCount = alerts.filter((alert) => !alert.read).length;
@@ -70,7 +73,7 @@ export const Layout: React.FC = () => {
 
   // 持久化通知分页查询（铃铛下拉打开时展示）
   const { data: notifData, isFetching: notifLoading } = useQuery({
-    queryKey: ['notifications', notifPage],
+    queryKey: notificationKeys.list(notifPage),
     queryFn: () => getNotifications({ page: notifPage, page_size: 10 }),
     enabled: showAlertMenu,
     placeholderData: (prev) => prev,
@@ -99,6 +102,11 @@ export const Layout: React.FC = () => {
     logout();
     navigate('/login');
   };
+  // 跳转路由同时收起移动端抽屉(桌面端不受影响)
+  const handleNavigate = (key: string) => {
+    navigate(key);
+    setMobileNavOpen(false);
+  };
   const displayName =
     user?.nickname === '管理员'
       ? t(user.role === 'admin' ? 'common:admin' : 'common:user')
@@ -110,7 +118,7 @@ export const Layout: React.FC = () => {
 
   return (
     <div className="app-layout">
-      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <aside id="primary-sidebar" className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${mobileNavOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon">
             <img src={`${import.meta.env.BASE_URL}logo.png`} alt="IPTV Recorder" />
@@ -125,21 +133,28 @@ export const Layout: React.FC = () => {
             const Icon = item.icon;
             const isActive = location.pathname === item.key;
             return (
-              <div
+              <button
+                type="button"
                 key={item.key}
                 className={`sidebar-item ${isActive ? 'active' : ''}`}
-                onClick={() => navigate(item.key)}
+                onClick={() => handleNavigate(item.key)}
+                aria-current={isActive ? 'page' : undefined}
+                aria-label={t(item.label)}
+                title={t(item.label)}
               >
                 <Icon size={20} strokeWidth={1.75} />
                 {!sidebarCollapsed && <span>{t(item.label)}</span>}
-              </div>
+              </button>
             );
           })}
         </nav>
 
         <button
+          type="button"
           className="sidebar-toggle"
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          aria-label={sidebarCollapsed ? t('layout:menu.expand') : t('layout:menu.collapse')}
+          aria-expanded={!sidebarCollapsed}
         >
           {sidebarCollapsed ? (
             <ChevronRight size={16} />
@@ -149,10 +164,25 @@ export const Layout: React.FC = () => {
         </button>
       </aside>
 
+      {/* 移动端侧边栏打开时的半透明遮罩:点击关闭抽屉。仅 mobile-open 时渲染。 */}
+      {mobileNavOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       <div className={`main-area ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <header className="header header-glass">
           <div className="header-left">
-            <button className="header-btn mobile-menu">
+            <button
+              className="header-btn mobile-menu"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label={t('layout:menu.openMenu')}
+              aria-expanded={mobileNavOpen}
+              aria-controls="primary-sidebar"
+            >
               <Menu size={20} />
             </button>
           </div>
@@ -176,7 +206,7 @@ export const Layout: React.FC = () => {
                     // 打开即视为已查看：标记全部已读（持久化）
                     if (persistentUnreadCount > 0) {
                       markAllRead().then(() => {
-                        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                        queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                       });
                     }
                     markAllAlertsRead();
@@ -199,7 +229,7 @@ export const Layout: React.FC = () => {
                           className="alert-clear-btn"
                           onClick={() => {
                             markAllRead().then(() => {
-                              queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                              queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                             });
                           }}
                         >
@@ -221,7 +251,7 @@ export const Layout: React.FC = () => {
                             onClick={() => {
                               if (!n.read) {
                                 markRead(n.id).then(() => {
-                                  queryClient.invalidateQueries({ queryKey: ['notifications'] });
+                                  queryClient.invalidateQueries({ queryKey: notificationKeys.root });
                                 });
                               }
                             }}

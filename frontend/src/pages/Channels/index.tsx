@@ -5,6 +5,7 @@ import { batchDeleteChannels, getChannels, getChannelGroups, deleteChannel, test
 import { toast } from '@/stores/toastStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys } from '@/lib/queryKeys';
 import {
   Search,
   Plus,
@@ -12,7 +13,6 @@ import {
   List,
   Filter,
   Upload,
-  MoreHorizontal,
   CirclePlay,
   Pencil,
   Trash2,
@@ -73,7 +73,7 @@ export const Channels: React.FC = () => {
   }, [selectedGroup, selectedSource]);
 
   const { data: channelsData, isLoading } = useQuery({
-    queryKey: ['channels', page, pageSize, selectedGroup, selectedSource, debouncedSearch],
+    queryKey: channelKeys.list([page, pageSize, selectedGroup, selectedSource, debouncedSearch]),
     queryFn: () => getChannels({
       page,
       page_size: pageSize,
@@ -84,14 +84,14 @@ export const Channels: React.FC = () => {
   });
 
   const { data: groups } = useQuery({
-    queryKey: ['channels', 'groups'],
+    queryKey: channelKeys.groups(),
     queryFn: getChannelGroups,
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteChannel,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelDeleted'));
     },
     onError: (error) => {
@@ -104,7 +104,7 @@ export const Channels: React.FC = () => {
     onSuccess: (result) => {
       const count = result?.deleted ?? selectedChannels.size;
       setSelectedChannels(new Set());
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelsBatchDeleted', { count }));
     },
     onError: (error) => {
@@ -136,7 +136,7 @@ export const Channels: React.FC = () => {
   const testMutation = useMutation({
     mutationFn: testChannel,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
       toast.success(t('common:toast.channelTestOk'));
       setTestingId(null);
     },
@@ -164,7 +164,7 @@ export const Channels: React.FC = () => {
       } catch {
         // Ignore individual test errors and continue testing the rest.
       }
-      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: channelKeys.root });
     }
 
     setBatchTesting(false);
@@ -257,6 +257,7 @@ export const Channels: React.FC = () => {
           className="pagination-btn"
           onClick={() => handlePageChange(page - 1)}
           disabled={page <= 1}
+          aria-label={t('common:previousPage', { defaultValue: '上一页' })}
         >
           <ChevronLeft size={16} />
         </button>
@@ -291,6 +292,7 @@ export const Channels: React.FC = () => {
           className="pagination-btn"
           onClick={() => handlePageChange(page + 1)}
           disabled={page >= channelsData.total_pages}
+          aria-label={t('common:nextPage', { defaultValue: '下一页' })}
         >
           <ChevronRight size={16} />
         </button>
@@ -411,12 +413,18 @@ export const Channels: React.FC = () => {
             <button
               className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
+              aria-label={t('channels:actions.tableView', { defaultValue: '表格视图' })}
+              aria-pressed={viewMode === 'table'}
+              title={t('channels:actions.tableView', { defaultValue: '表格视图' })}
             >
               <List size={16} />
             </button>
             <button
               className={`toggle-btn ${viewMode === 'card' ? 'active' : ''}`}
               onClick={() => setViewMode('card')}
+              aria-label={t('channels:actions.cardView', { defaultValue: '卡片视图' })}
+              aria-pressed={viewMode === 'card'}
+              title={t('channels:actions.cardView', { defaultValue: '卡片视图' })}
             >
               <LayoutGrid size={16} />
             </button>
@@ -506,6 +514,7 @@ export const Channels: React.FC = () => {
                       <button
                         className="action-btn"
                         title={t('channels:actions.play')}
+                        aria-label={t('channels:actions.play')}
                         onClick={() => handlePlay(channel)}
                       >
                         <CirclePlay size={16} />
@@ -513,6 +522,7 @@ export const Channels: React.FC = () => {
                       <button
                         className="action-btn"
                         title={t('channels:actions.test')}
+                        aria-label={t('channels:actions.test')}
                         onClick={() => {
                           setTestingId(channel.id);
                           testMutation.mutate(channel.id);
@@ -528,6 +538,7 @@ export const Channels: React.FC = () => {
                       <button
                         className="action-btn"
                         title={t('channels:actions.epg')}
+                        aria-label={t('channels:actions.epg')}
                         onClick={() => handleOpenEpgPrograms(channel)}
                       >
                         <CalendarDays size={16} />
@@ -535,6 +546,7 @@ export const Channels: React.FC = () => {
                       <button
                         className="action-btn"
                         title={t('channels:actions.edit')}
+                        aria-label={t('channels:actions.edit')}
                         onClick={() => handleEditChannel(channel)}
                       >
                         <Pencil size={16} />
@@ -542,6 +554,7 @@ export const Channels: React.FC = () => {
                       <button
                         className="action-btn danger"
                         title={t('channels:actions.delete')}
+                        aria-label={t('channels:actions.delete')}
                         onClick={() => setDeletingChannel(channel)}
                       >
                         <Trash2 size={16} />
@@ -588,6 +601,7 @@ export const Channels: React.FC = () => {
                       handlePlay(channel);
                     }}
                     title={t('channels:actions.play')}
+                    aria-label={t('channels:actions.play')}
                   >
                     <CirclePlay size={24} />
                   </button>
@@ -600,6 +614,7 @@ export const Channels: React.FC = () => {
                     }}
                     disabled={testingId === channel.id || batchTesting}
                     title={t('channels:actions.test')}
+                    aria-label={t('channels:actions.test')}
                     style={{ marginLeft: '8px' }}
                   >
                     {testingId === channel.id ? (
@@ -620,6 +635,7 @@ export const Channels: React.FC = () => {
                 <button
                   className="action-btn"
                   title={t('channels:actions.epg')}
+                  aria-label={t('channels:actions.epg')}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleOpenEpgPrograms(channel);
@@ -630,6 +646,7 @@ export const Channels: React.FC = () => {
                 <button
                   className="action-btn"
                   title={t('channels:actions.edit')}
+                  aria-label={t('channels:actions.edit')}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleEditChannel(channel);
@@ -640,19 +657,13 @@ export const Channels: React.FC = () => {
                 <button
                   className="action-btn danger"
                   title={t('channels:actions.delete')}
+                  aria-label={t('channels:actions.delete')}
                   onClick={(e) => {
                     e.stopPropagation();
                     setDeletingChannel(channel);
                   }}
                 >
                   <Trash2 size={16} />
-                </button>
-                <button
-                  className="action-btn"
-                  title={t('channels:actions.more')}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <MoreHorizontal size={16} />
                 </button>
               </div>
             </div>

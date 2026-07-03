@@ -2,11 +2,12 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTasks, cancelTask } from '@/api/tasks';
-import { getAllChannels, getChannels } from '@/api/channels';
+import { getChannels } from '@/api/channels';
 import { getSchedules } from '@/api/schedules';
 import { getUpcoming } from '@/api/system';
 import { formatBytes, formatMinutes, formatShortDateTime } from '@/i18n/format';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys, scheduleKeys, taskKeys, upcomingKeys } from '@/lib/queryKeys';
 import type { AppLanguage } from '@/i18n/types';
 import {
   Tv,
@@ -17,7 +18,6 @@ import {
   StopCircle,
   Clock,
   ArrowUpRight,
-  MoreHorizontal,
 } from 'lucide-react';
 import type { Task } from '@/types';
 import './Dashboard.css';
@@ -114,13 +114,15 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, channelName, onStop }) => {
 
       <div className="task-actions">
         {isRunning && (
-          <button className="action-btn danger" onClick={onStop}>
+          <button
+            className="action-btn danger"
+            onClick={onStop}
+            aria-label={t('common:stop', { defaultValue: '停止' })}
+            title={t('common:stop', { defaultValue: '停止' })}
+          >
             <StopCircle size={16} />
           </button>
         )}
-        <button className="action-btn">
-          <MoreHorizontal size={16} />
-        </button>
       </div>
     </div>
   );
@@ -131,28 +133,27 @@ export const Dashboard: React.FC = () => {
   const isI18nReady = useI18nNamespace(['dashboard', 'common']);
   const queryClient = useQueryClient();
 
+  // 频道总数(getChannels 分页查询,只取 .total 给 stat 卡片)。
+  // 此前还额外发一次 getAllChannels 全量拉取只为建 channelMap 查 channel_id→name,
+  // 现任务列表 JOIN 带 channel_name,全量拉取已删除。
   const { data: channels } = useQuery({
-    queryKey: ['channels', 'count'],
+    queryKey: channelKeys.count(),
     queryFn: () => getChannels({ page_size: 1 }),
   });
 
-  const { data: allChannels } = useQuery({
-    queryKey: ['channels', 'all'],
-    queryFn: getAllChannels,
-  });
-
   const { data: schedules } = useQuery({
-    queryKey: ['schedules'],
+    queryKey: scheduleKeys.all(),
     queryFn: getSchedules,
   });
 
-  const { data: tasks, isLoading: tasksLoading, refetch } = useQuery({
-    queryKey: ['tasks'],
-    queryFn: getTasks,
+  const { data: tasksData, isLoading: tasksLoading, refetch } = useQuery({
+    queryKey: taskKeys.list({ page: 1, page_size: 100 }),
+    queryFn: () => getTasks({ page: 1, page_size: 100 }),
   });
+  const tasks = tasksData?.items;
 
   const { data: upcoming, isLoading: upcomingLoading } = useQuery({
-    queryKey: ['upcoming'],
+    queryKey: upcomingKeys.upcoming(),
     queryFn: getUpcoming,
     refetchInterval: 10000,
   });
@@ -160,7 +161,7 @@ export const Dashboard: React.FC = () => {
   const cancelMutation = useMutation({
     mutationFn: cancelTask,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
     },
   });
 
@@ -170,16 +171,9 @@ export const Dashboard: React.FC = () => {
   const totalStorage = tasks?.reduce((sum, task) => sum + (task.file_size || 0), 0) || 0;
   const enabledSchedules = schedules?.filter((schedule) => schedule.enabled).length || 0;
 
-  const channelMap = React.useMemo(() => {
-    const map = new Map<string, string>();
-    allChannels?.forEach((channel) => {
-      map.set(channel.id, channel.name);
-    });
-    return map;
-  }, [allChannels]);
-
-  const getChannelName = (channelId: string) =>
-    channelMap.get(channelId) || t('common:channelFallback', { id: channelId.slice(0, 8) });
+  // 频道名直接读 task.channel_name(列表接口 JOIN channels 带),省去全量频道拉取。
+  const getChannelName = (task: { channel_id: string; channel_name?: string }) =>
+    task.channel_name || t('common:channelFallback', { id: task.channel_id.slice(0, 8) });
 
   if (!isI18nReady) {
     return <div className="page-loading">{t('common:loading')}</div>;
@@ -267,7 +261,7 @@ export const Dashboard: React.FC = () => {
                   <div key={task.id} className="stagger-item" style={{ animationDelay: `${index * 0.05}s` }}>
                     <TaskRow
                       task={task}
-                      channelName={getChannelName(task.channel_id)}
+                      channelName={getChannelName(task)}
                       onStop={() => cancelMutation.mutate(task.id)}
                     />
                   </div>
@@ -299,7 +293,7 @@ export const Dashboard: React.FC = () => {
                     <div className="timeline-content">
                       <div className="timeline-title">{task.schedule_name}</div>
                       <div className="timeline-meta">
-                        <span className="channel">{getChannelName(task.channel_id)}</span>
+                        <span className="channel">{getChannelName(task)}</span>
                         <span className="time">
                           {formatShortDateTime(task.next_run, i18n.language as AppLanguage)}
                         </span>
@@ -338,7 +332,7 @@ export const Dashboard: React.FC = () => {
                   </div>
                   <div className="recent-info">
                     <div className="recent-name">
-                      {getChannelName(task.channel_id)}
+                      {getChannelName(task)}
                     </div>
                     <div className="recent-meta">
                       <span>{formatMinutes(task.duration_recorded, t)}</span>

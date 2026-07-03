@@ -17,6 +17,7 @@ import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { usePlayerCore } from './usePlayerCore';
 import { useDraggable } from '@/hooks/useDraggable';
 import { useResizable } from '@/hooks/useResizable';
+import { useModalA11y } from '@/lib/useModalA11y';
 import './PlayerModal.css';
 
 /**
@@ -48,6 +49,8 @@ export const MiniPlayer: React.FC = () => {
 
   // 小窗元素 ref，供拖拽/resize 读取尺寸
   const miniRef = useRef<HTMLDivElement>(null);
+  // 大窗模式 overlay ref,供 a11y 焦点陷阱
+  const largeOverlayRef = useRef<HTMLDivElement>(null);
 
   // active 只看 channel 是否存在，不看 mode——大小窗都保持播放
   const {
@@ -83,6 +86,9 @@ export const MiniPlayer: React.FC = () => {
     { minWidth: 240, maxWidth: 720 },
     mode === 'mini',
   );
+
+  // 大窗模式 a11y:Esc 收回小窗(保持播放),焦点陷阱 + 还原。
+  useModalA11y(largeOverlayRef, mode === 'large', minimize);
 
   if (!channel || !mode) return null;
 
@@ -172,7 +178,15 @@ export const MiniPlayer: React.FC = () => {
   // ============ 大窗模式 ============
   if (mode === 'large') {
     return (
-      <div className="player-modal-overlay" onClick={handleClose}>
+      <div
+        className="player-modal-overlay"
+        onClick={handleClose}
+        ref={largeOverlayRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={channelName}
+        tabIndex={-1}
+      >
         <div className="player-modal-content" onClick={(e) => e.stopPropagation()}>
           <div className="player-modal-header">
             <h2>{channelName}</h2>

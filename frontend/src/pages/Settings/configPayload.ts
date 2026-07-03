@@ -12,6 +12,7 @@ export const buildConfigUpdateRequest = (config: SystemConfig): ConfigUpdateRequ
     // n_m3u8dl_re_path 由后端/Docker 镜像内部集成，不开放修改，提交时不发送
     max_retry: config.recording.max_retry,
     thread_count: config.recording.thread_count,
+    task_stale_timeout_secs: config.recording.task_stale_timeout_secs,
   },
   notification: {
     on_complete: config.notification.on_complete,

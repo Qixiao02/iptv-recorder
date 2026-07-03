@@ -68,6 +68,14 @@
 }
 
 .sidebar-item {
+  /* 按钮原生样式重置(由 div 改为 button 以获得键盘可访问性) */
+  appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -607,6 +615,15 @@
 
   .sidebar.mobile-open {
     transform: translateX(0);
+  }
+
+  /* 移动端侧边栏抽屉遮罩:点按关闭。z-index 高于 header(≤50)、低于 sidebar(100)。
+     保证抽屉本身可点击,同时盖住页面其余部分。 */
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 90;
   }
 
   .sidebar-toggle {

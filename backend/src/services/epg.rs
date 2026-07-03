@@ -72,6 +72,12 @@ impl EpgService {
         let source_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
+        // 单事务包裹 source INSERT + programme 批量写入:
+        // 1) 原子性——中途失败(解析/IO)整体回滚,不留半截脏 source;
+        // 2) 性能——原先每条 programme 各自一个事务(各 fsync 一次),大型 XMLTV
+        //    (上万条)极慢且长时间持锁。单事务只需一次 fsync(WAL 下更省)。
+        let mut tx = self.ctx.db.begin().await?;
+
         sqlx::query(
             r#"
             INSERT INTO epg_sources (id, name, source_url, created_at, updated_at)
@@ -83,7 +89,7 @@ impl EpgService {
         .bind(req.url.as_deref())
         .bind(&now)
         .bind(&now)
-        .execute(&self.ctx.db)
+        .execute(&mut *tx)
         .await?;
 
         for programme in parsed.programmes {
@@ -96,16 +102,18 @@ impl EpgService {
             )
             .bind(Uuid::new_v4().to_string())
             .bind(&source_id)
-            .bind(&programme.channel)
-            .bind(&programme.title.value)
+            .bind(programme.channel)
+            .bind(programme.title.value)
             .bind(programme.desc.map(|d| d.value))
             .bind(programme.category.map(|c| c.value))
             .bind(normalize_xmltv_datetime(&programme.start))
             .bind(normalize_xmltv_datetime(&programme.stop))
             .bind(&now)
-            .execute(&self.ctx.db)
+            .execute(&mut *tx)
             .await?;
         }
+
+        tx.commit().await?;
 
         self.get_source(&source_id).await
     }

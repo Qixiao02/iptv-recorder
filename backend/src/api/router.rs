@@ -9,6 +9,7 @@ use axum::{
 use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
 use tower_http::{
+    compression::CompressionLayer,
     cors::{AllowOrigin, CorsLayer},
     services::ServeDir,
     set_header::SetResponseHeaderLayer,
@@ -289,6 +290,10 @@ pub async fn create_router(
                 tracing::info_span!("http_request", method = %request.method(), uri = %redacted)
             }),
         )
+        // 响应压缩:对 JSON/HTML 等文本响应按客户端 Accept-Encoding 做 br/gzip/deflate 压缩。
+        // CompressionLayer 内部会按 content-type 跳过已压缩类型(video/*、image/* 等),
+        // 流媒体代理的 .ts/.mp4 不会被压缩;HLS 清单(.m3u8,文本)可被压缩且体积很小。
+        .layer(CompressionLayer::new())
         .with_state((db, scheduler, process_manager, config));
 
     Ok(app)

@@ -5,7 +5,7 @@
 use anyhow::Result;
 use sqlx::{
     migrate::Migrator,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteJournalMode, SqliteSynchronous},
     Pool, Sqlite,
 };
 use std::path::Path;
@@ -22,9 +22,17 @@ pub async fn init(db_path: &str, pool_size: u32) -> Result<Db> {
     let absolute_path = resolve_db_path(db_path)?;
     ensure_parent_dir(&absolute_path).await?;
 
+    // 关键 PRAGMA:默认 journal 模式为 DELETE(全表锁 + 每事务 fsync),并发录制心跳 +
+    // cron + 清理会触发 "database is locked"。WAL 允许并发读 + 单写,synchronous=Normal
+    // 在 WAL 下足够安全且大幅降低 fsync 成本;busy_timeout 让锁冲突等待而非立即报错。
+    // foreign_keys=ON 让 schema 声明的 ON DELETE CASCADE 真正生效(SQLite 默认关闭)。
     let options = SqliteConnectOptions::new()
         .filename(&absolute_path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .foreign_keys(true);
 
     tracing::info!("Connecting to database: {}", absolute_path.display());
 
@@ -34,6 +42,23 @@ pub async fn init(db_path: &str, pool_size: u32) -> Result<Db> {
         .await?;
 
     run_migrations(&pool).await?;
+
+    // 诊断:确认连接级 PRAGMA(foreign_keys/synchronous)真的在应用连接上生效。
+    // 这两个 PRAGMA 是连接级、非持久(SQLite 默认 foreign_keys=OFF),CLI 独立连接
+    // 查到的是默认值,无法代表应用连接,故启动时在应用连接上查一次并记录。
+    let fk: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(-1);
+    let sync: i64 = sqlx::query_scalar("PRAGMA synchronous")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(-1);
+    tracing::info!(
+        "DB PRAGMA check: foreign_keys={} (期望 1), synchronous={} (期望 1=NORMAL)",
+        fk,
+        sync
+    );
 
     Ok(pool)
 }

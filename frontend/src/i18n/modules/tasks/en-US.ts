@@ -19,6 +19,8 @@ export default {
   emptyTitle: 'No task records',
   emptyAll: 'Tasks will appear here after recordings start',
   emptyFiltered: 'No {{status}} tasks',
+  pageSize: '{{count}} / page',
+  total: '{{count}} total',
   live: {
     idle: 'Not connected',
     connecting: 'Connecting live channel',

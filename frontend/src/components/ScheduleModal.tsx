@@ -5,6 +5,8 @@ import { createSchedule, updateSchedule } from '@/api/schedules';
 import { getAllChannels } from '@/api/channels';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { channelKeys, scheduleKeys, upcomingKeys } from '@/lib/queryKeys';
+import { useModalA11y } from '@/lib/useModalA11y';
 import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
 import type { Schedule, CreateScheduleRequest, Channel } from '@/types';
 import './Modal.css';
@@ -97,9 +99,11 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const [channelSearchOpen, setChannelSearchOpen] = useState(false);
   const [channelKeyword, setChannelKeyword] = useState('');
   const channelSearchRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y(overlayRef, isOpen, onClose);
 
   const { data: channels } = useQuery({
-    queryKey: ['channels', 'all'],
+    queryKey: channelKeys.all(),
     queryFn: getAllChannels,
   });
 
@@ -164,8 +168,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const createMutation = useMutation({
     mutationFn: createSchedule,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
-      queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
+      queryClient.invalidateQueries({ queryKey: upcomingKeys.upcoming() });
       toast.success(t('common:toast.scheduleCreated'));
       handleClose();
     },
@@ -178,8 +182,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     mutationFn: ({ id, data }: { id: string; data: CreateScheduleRequest }) =>
       updateSchedule(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['schedules'] });
-      queryClient.invalidateQueries({ queryKey: ['upcoming'] });
+      queryClient.invalidateQueries({ queryKey: scheduleKeys.root });
+      queryClient.invalidateQueries({ queryKey: upcomingKeys.upcoming() });
       toast.success(t('common:toast.scheduleUpdated'));
       handleClose();
     },
@@ -211,11 +215,19 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={handleClose}>
+    <div
+      className="modal-overlay"
+      onClick={handleClose}
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="schedule-modal-title"
+      tabIndex={-1}
+    >
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{isEdit ? t('components:scheduleModal.editTitle') : t('components:scheduleModal.createTitle')}</h2>
-          <button className="modal-close" onClick={handleClose}>
+          <h2 id="schedule-modal-title">{isEdit ? t('components:scheduleModal.editTitle') : t('components:scheduleModal.createTitle')}</h2>
+          <button className="modal-close" onClick={handleClose} aria-label={t('common:close', { defaultValue: '关闭' })}>
             <X size={20} />
           </button>
         </div>
@@ -308,6 +320,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
                 className="help-btn"
                 onClick={() => setShowCronHelp(!showCronHelp)}
                 title={t('components:scheduleModal.cronHelpTitle')}
+                aria-label={t('components:scheduleModal.cronHelpTitle')}
+                aria-expanded={showCronHelp}
               >
                 <HelpCircle size={16} />
               </button>
@@ -453,6 +467,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
                       className="help-btn"
                       onClick={() => setShowTranscodeHelp(!showTranscodeHelp)}
                       title={t('components:scheduleModal.transcodeHelpTitle')}
+                      aria-label={t('components:scheduleModal.transcodeHelpTitle')}
+                      aria-expanded={showTranscodeHelp}
                     >
                       <HelpCircle size={16} />
                     </button>

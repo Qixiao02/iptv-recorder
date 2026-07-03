@@ -5,6 +5,10 @@ export default {
     schedules: 'Schedules',
     tasks: 'Tasks',
     settings: 'Settings',
+    openMenu: 'Open navigation menu',
+    closeMenu: 'Close navigation menu',
+    expand: 'Expand sidebar',
+    collapse: 'Collapse sidebar',
   },
   theme: {
     switchToLight: 'Switch to light mode',

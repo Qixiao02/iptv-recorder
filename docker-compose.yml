@@ -6,16 +6,24 @@
 #
 # 首次部署:
 #   1) bash scripts/generate-env.sh        # 生成 .env (JWT 密钥 + 初始密码, 必做)
-#   2) docker compose up -d --build
+#   2) docker compose up -d --build        # 构建并启动(镜像打 tag: iptv-recorder:<版本>)
 #   3) 浏览器访问 http://localhost:3033
+#
+# 导出镜像(分发/备份):
+#   docker save iptv-recorder:0.1.7 -o iptv-recorder-0.1.7.tar
+#
+# 在另一台机器加载镜像并启动(无需源码):
+#   docker load -i iptv-recorder-0.1.6.tar
+#   docker compose up -d                   # 复用已加载的镜像,不触发 build
 
 services:
   iptv-recorder:
+    # 镜像 tag:与 build 同时指定时,构建产物会打上此 tag;不构建时(docker compose pull)
+    # 也用此 tag 拉取。版本号变更时同步更新此处(及 Cargo.toml / package.json / i18n)。
+    image: iptv-recorder:0.1.7
     build:
       context: .
       dockerfile: Dockerfile
-    # 也可直接用已构建/已导出的镜像,跳过本地构建:
-    # image: iptv-recorder:latest
     container_name: iptv-recorder
     restart: unless-stopped
     # 密钥与初始密码从 .env 读取(首次运行前用 scripts/generate-env 生成)

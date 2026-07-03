@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { login } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
@@ -9,6 +9,7 @@ import './Login.css';
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation(['login', 'common']);
   const isI18nReady = useI18nNamespace(['login', 'common']);
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -17,6 +18,23 @@ export const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // 登录成功后回跳到来源页:优先 location.state.from(ProtectedRoute / 401 拦截器设置),
+  // 兜底 sessionStorage('auth-redirect-from',硬跳转场景),再兜底首页。
+  const getRedirectTarget = (): string => {
+    const fromState = (location.state as { from?: string } | null)?.from;
+    if (fromState && fromState !== '/login') return fromState;
+    try {
+      const fromSession = sessionStorage.getItem('auth-redirect-from');
+      if (fromSession) {
+        sessionStorage.removeItem('auth-redirect-from');
+        return fromSession;
+      }
+    } catch {
+      // 忽略隐私模式读取失败
+    }
+    return '/';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +50,7 @@ export const Login: React.FC = () => {
     try {
       const response = await login({ username, password });
       setAuth(response.token, response.user);
-      navigate('/');
+      navigate(getRedirectTarget(), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : t('login:failed'));
     } finally {

@@ -150,6 +150,7 @@ export default {
     nM3u8dlRePath: 'N_m3u8DL-RE 路径',
     maxRetry: '最大重试次数',
     threadCount: '线程数',
+    staleTimeout: '僵尸任务超时',
     notification: '通知设置',
     notifyOnComplete: '录制完成通知',
     notifyOnFailure: '录制失败通知',

@@ -2,6 +2,37 @@
 
 本文件记录 IPTV Recorder 的所有显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.7] - 2026-07-04
+
+### 🔒 安全 / 正确性修复（高优先级）
+- **数据库启用 WAL + foreign_keys + synchronous=NORMAL**：此前 SQLite 用默认 DELETE 日志模式（每次写全表锁 + fsync），并发录制心跳、Cron 触发、清理任务并发写时会触发 `database is locked`。改用 WAL（并发读 + 单写）+ busy_timeout=5s（锁冲突等待而非立即报错）+ synchronous=NORMAL（WAL 下足够安全且大幅降 fsync 成本）。同时启用 `foreign_keys=ON`，让 schema 声明的 `ON DELETE CASCADE` 首次真正生效（SQLite 默认关闭，此前删频道会留下孤立的 tasks/schedules）。启动时记录连接级 PRAGMA 实际值便于核查。
+- **EPG 导入改为单事务**：此前每条节目单各自一条 INSERT（各自一次 fsync），大型 XMLTV（上万条）极慢且长时间持锁；且源 INSERT 与节目写入不在同一事务，中途失败会留下半截脏源。改为单事务包裹：失败整体回滚，且只需一次 fsync。
+- **流式代理改为增量转发**：`/api/proxy/stream` 此前用 `response.bytes().await` 把整条上游媒体流读进内存再转发，长直播/大片是内存耗尽向量。改为 `Body::from_stream(bytes_stream())` 增量转发，内存占用 O(buffer)；移除会杀断长流的整体 30s 超时，改 connect_timeout。
+- **HTTP 响应压缩**：tower-http 的 `compression-br` feature 此前已编译但未挂 `CompressionLayer`，JSON 列表（channels/tasks/EPG）、index.html 全部裸传。补全 gzip/deflate feature 并挂层，按 Accept-Encoding 协商，文本响应压缩 70-80%。CompressionLayer 内部按 content-type 跳过已压缩类型，流媒体代理的 .ts/.mp4 不受影响。
+- **录制任务僵尸检测与启动恢复**：新增 `TaskLivenessService` 常驻巡检——running 任务若超过 `task_stale_timeout_secs`（默认 90s，可在设置页调 30-3600s）未更新 `updated_at`，判定为僵尸并自动置失败、发通知、释放 migration 0006 占用的录制名额。补充 `reconcile_orphaned_tasks` 在后端重启时一次性清理残留 running 任务（在调度器启动前执行），避免"重启后再也录不了同一个台"。
+
+### 🐛 修复
+- **移动端侧边栏导航失效**：汉堡按钮此前没有 onClick、无 mobileOpen 状态，CSS 定义的 `.sidebar.mobile-open` 类永不被应用，导致 ≤768px 下侧边栏 `translateX(-100%)` 永久隐藏，手机用户无法导航到任何页面。新增 mobileNavOpen 状态：点汉堡打开抽屉、点导航项或半透明遮罩关闭。
+- **401 改为 SPA 路由化 + 登录后回原页**：Token 失效时此前用 `window.location.href='/login'` 整页硬跳，丢失内存状态（未保存表单 / WS 连接）、直接抠 localStorage 绕过 store，且 ProtectedRoute 已实现的 `from` 回跳机制被废弃（重登后回不到原页）。改为 axios 拦截器走 `useAuthStore.logout()` 正确清理 + SPA 跳转带 `state.from`，登录页 honor `from` 回跳。
+
+### 🚀 性能
+- **tasks 列表分页 + 状态筛选 + JOIN channel_name**：`GET /api/tasks` 此前返回全部 Task[]（无分页），每次 WS 任务状态变化都触发全量重拉；前端还要额外发一次全量频道请求只为查 channel_id→name。改造为分页信封（PaginatedTasks，结构对齐 PaginatedChannels）+ LEFT JOIN channels 带 channel_name + 可按 status 筛选下推到 DB。
+- **tasks 热查询索引**：补 `created_at`（列表 ORDER BY DESC 走索引免排序）、`schedule_id`（按计划查历史）、`(status, updated_at)` 复合（audit/dashboard 的 failed_tasks_24h 扫描）三组索引。
+- **HLS 轮询与目录列举改用 tokio::fs**：转码服务的 HLS 就绪轮询（500ms 循环里 `playlist_ready_state`/`count_hls_segments`/`collect_hls_diagnostics`）和设置页的服务器目录浏览器，此前都用 `std::fs` 在 Tokio worker 线程上做同步 IO，磁盘压力下会卡住整个 async runtime，延迟 WebSocket 推送和 HTTP 响应。改为 `tokio::fs` 交由阻塞线程池。
+- **Dashboard 去除全量频道拉取**：此前为给任务行查频道名，Dashboard 额外发 `getAllChannels` 全量拉取（数百频道全表）只为建 channelMap。任务列表 JOIN 已带 channel_name，删除该查询与 channelMap，直接读 task.channel_name。
+- **Tasks 页去除双状态实时层**：Tasks 页此前维护本地 `liveProgress` Map + 本地 WS 订阅，与 App.tsx 的全局 WS 补丁重复，每个进度 tick 两次状态写 + 整列重渲染。删除本地 Map 与订阅，信任 App.tsx 经 `taskRealtime`（按根前缀 `setQueriesData` 遍历所有任务信封缓存）的实时补丁。
+
+### 🛠 重构
+- **集中式 query-key 工厂**：queryKey 字面量此前散落 13 个文件（如 `['tasks']`、`['channels','all']`），一处拼写错误会让缓存失效/实时更新静默失效。新建 `lib/queryKeys.ts` 统一管理（taskKeys/channelKeys/configKeys/notificationKeys/auditKeys/scheduleKeys/upcomingKeys/epgKeys），保留前缀失效 vs 精确读写的语义。
+- **删除死代码**：移除零引用的 `channelStore.ts`（频道全走 TanStack Query）、与 `toastStore` 重复的 `useToast.ts`（仅 ToastItem 类型被 ConfirmDialog 引用，迁入 toastStore 后删除）、Vite 模板残留 `App.css`。
+
+### ♿ 无障碍
+- **7 个模态补焦点陷阱 + Esc 关闭**：此前所有模态（TaskDetail/Schedule/Channel/ImportM3U/EpgPrograms/ConfirmDialog/MiniPlayer 大窗）都没有 Esc 关闭、没有焦点陷阱、关闭不还原焦点，键盘/屏幕阅读器用户会被困住。新增零依赖手写的 `useModalA11y` hook（Esc 关闭 + 打开聚焦 + Tab 循环 + 关闭还原焦点），5 个标准模态加 role=dialog/aria-modal/aria-labelledby，ConfirmDialog 加 role=alertdialog，MiniPlayer 大窗 Esc 收回小窗。
+- **侧边栏导航可访问化**：导航项从 `<div onClick>` 改为 `<button>` + `aria-current="page"`，键盘可操作、屏幕阅读器可识别；收起按钮补 aria-label/aria-expanded。
+- **图标按钮补全 aria-label**：此前大量图标按钮只靠 title（屏幕阅读器不朗读）或无标注。为 Channels/Tasks/Dashboard/ScheduleModal 的图标按钮补 aria-label；删除两个无 onClick 的误导性死按钮（Dashboard TaskRow 与 Channels 卡片的 MoreHorizontal）。
+
+---
+
 ## [0.1.6] - 2026-06-29
 
 ### 🐛 修复

@@ -15,6 +15,7 @@ describe('buildConfigUpdateRequest', () => {
         n_m3u8dl_re_path: '/usr/local/bin/N_m3u8DL-RE',
         max_retry: 5,
         thread_count: 6,
+        task_stale_timeout_secs: 120,
       },
       notification: {
         on_complete: true,
@@ -31,9 +32,10 @@ describe('buildConfigUpdateRequest', () => {
       },
       recording: {
         default_duration_minutes: 90,
-        n_m3u8dl_re_path: '/usr/local/bin/N_m3u8DL-RE',
+        // n_m3u8dl_re_path 由后端/Docker 镜像内部集成，不开放修改，提交时不发送
         max_retry: 5,
         thread_count: 6,
+        task_stale_timeout_secs: 120,
       },
       notification: {
         on_complete: true,

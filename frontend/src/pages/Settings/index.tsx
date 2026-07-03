@@ -18,6 +18,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { formatShortDateTime } from '@/i18n/format';
+import { auditKeys, configKeys, taskKeys } from '@/lib/queryKeys';
 import type { AppLanguage } from '@/i18n/types';
 import type { SystemConfig } from '@/types';
 import { buildConfigUpdateRequest } from './configPayload';
@@ -64,7 +65,7 @@ type SettingsSection = 'general' | 'storage' | 'recording' | 'notification' | 'o
 const defaultConfig: SystemConfig = {
   server: { host: '127.0.0.1', port: 3000 },
   storage: { recordings_path: './data/recordings', auto_cleanup_days: 30, min_free_space_gb: 10 },
-  recording: { default_duration_minutes: 60, n_m3u8dl_re_path: 'N_m3u8DL-RE', max_retry: 3, thread_count: 4 },
+  recording: { default_duration_minutes: 60, n_m3u8dl_re_path: 'N_m3u8DL-RE', max_retry: 3, thread_count: 4, task_stale_timeout_secs: 90 },
   notification: { on_complete: true, on_failure: true, disk_warning: true },
 };
 
@@ -110,7 +111,7 @@ export const SettingsPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
 
   const { data: config, isLoading, refetch: refetchConfig } = useQuery({
-    queryKey: ['config'],
+    queryKey: configKeys.config(),
     queryFn: getConfig,
   });
 
@@ -119,7 +120,7 @@ export const SettingsPage: React.FC = () => {
     isLoading: isHealthLoading,
     refetch: refetchSystemHealth,
   } = useQuery({
-    queryKey: ['system', 'health'],
+    queryKey: configKeys.health(),
     queryFn: getSystemHealth,
     enabled: isAdmin,
     refetchInterval: isAdmin ? 30000 : false,
@@ -133,7 +134,7 @@ export const SettingsPage: React.FC = () => {
     isLoading: isAuditLoading,
     refetch: refetchAuditLogs,
   } = useQuery({
-    queryKey: ['audit', 'logs', auditPage, auditPageSize],
+    queryKey: auditKeys.logs(auditPage, auditPageSize),
     queryFn: () => getAuditLogs({ page: auditPage, page_size: auditPageSize }),
     enabled: isAdmin,
     placeholderData: (prev) => prev,
@@ -191,7 +192,7 @@ export const SettingsPage: React.FC = () => {
   const cleanupMutation = useMutation({
     mutationFn: runCleanup,
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: taskKeys.root });
       refetchSystemHealth();
       refetchAuditLogs();
       addAlert({
@@ -501,6 +502,23 @@ export const SettingsPage: React.FC = () => {
                 min={1}
                 max={32}
               />
+            </div>
+            <div className="setting-item">
+              <div className="setting-info">
+                <label>{t('settings:recording.staleTimeout')}</label>
+                <span className="setting-desc">{t('settings:recording.staleTimeoutDesc')}</span>
+              </div>
+              <div className="input-with-suffix">
+                <input
+                  type="number"
+                  className="input"
+                  value={localConfig.recording.task_stale_timeout_secs}
+                  onChange={(e) => updateLocalConfig('recording.task_stale_timeout_secs', parseInt(e.target.value) || 90)}
+                  min={30}
+                  max={3600}
+                />
+                <span className="input-suffix">{t('settings:recording.seconds')}</span>
+              </div>
             </div>
           </div>
         );

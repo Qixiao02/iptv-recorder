@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { importEpgSource } from '@/api/epg';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
+import { epgKeys } from '@/lib/queryKeys';
 import { Loader2, X } from 'lucide-react';
 import './Modal.css';
 
@@ -30,7 +31,7 @@ export const EpgImportModal: React.FC<EpgImportModalProps> = ({ isOpen, onClose 
   const mutation = useMutation({
     mutationFn: importEpgSource,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['epg', 'sources'] });
+      queryClient.invalidateQueries({ queryKey: epgKeys.sources() });
       onClose();
     },
   });
