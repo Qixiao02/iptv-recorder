@@ -2,6 +2,22 @@
 
 本文件记录 IPTV Recorder 的所有显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.8] - 2026-07-10
+
+### ✨ 新功能
+- **PUID/PGID 动态用户（NAS 部署权限根治）**：镜像改用 jellyfin/sonarr 式的动态用户方案。容器以 root 启动，入口脚本读取 `PUID`/`PGID` 环境变量，动态调整 `app` 用户的 uid/gid 与宿主用户对齐，再用 `su-exec` 切换到该用户运行。这样容器进程的 uid/gid 和宿主当前用户一致，挂载进来的存储卷（飞牛 `/vol00` 等）都能读写，**无需手动 `chmod`/`chown`**，彻底根除「`app` 用户写不进 root 属主目录 → SQLite `code 14` 崩溃」的权限问题。
+- **SQLite 权限失败友好提示**：再遇到数据库无法打开（`code 14`）时，日志会明确指引「在 `.env` 设置 `PUID`/`PGID` 与宿主用户对齐」，不再是裸的 `unable to open database file`。
+
+### 🐛 修复
+- **PUID/PGID 入口脚本两个启动崩溃**：① BusyBox 的 `delgroup` 在组被引用时失败导致 `addgroup: group 'app' in use` 循环；改用 `groupmod`/`usermod` + `sed` 降级。② `docker-compose.yml` 的 `cap_drop: ALL` 删掉了 `SETUID`/`SETGID`，导致 `su-exec: setgroups: Operation not permitted`；改为 `cap_drop: ALL` 后 `cap_add: SETUID/SETGID/CHOWN/FOWNER`，既保持最小权限又允许用户切换。两项均经容器实测三种场景（默认/自定义 PUID/root 属主）验证通过。
+
+### 🔧 工程
+- **两个 compose 文件职责明确**：`docker-compose.yml`（含 `build:`，本地开发用）顶部加醒目说明，`docker-compose.deploy.yml`（纯镜像，NAS/服务器部署用）改用 PUID/PGID 引导取代暴力的 `user: "0:0"`。README 新增「两个 compose 选用」+「权限与 PUID/PGID」章节，避免误用导致路径/端口混乱。
+- **LF 行尾保护**：`.gitattributes` 强制 `*.sh` / `Dockerfile` 用 LF 行尾，防止 Windows `autocrlf` 转 CRLF 导致容器内 `/bin/sh^M: not found`。
+- **部署配置收紧**（v0.1.7 后的 3 个 deploy commit）：deploy compose 收紧挂载只挂存储卷不挂整个根、部署外部端口改为 5669、修复重复 ports 配置。
+
+---
+
 ## [0.1.7] - 2026-07-04
 
 ### 🔒 安全 / 正确性修复（高优先级）

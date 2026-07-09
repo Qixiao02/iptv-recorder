@@ -57,7 +57,7 @@ ARG N_M3U8DL_RE_DATE=20251029
 ARG N_M3U8DL_RE_SHA256=7105e26b76b099b41fcd490b9d09b3d43be971a880b6323fb988b688be00ab82
 
 RUN sed -i 's#https://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates curl ffmpeg libgcc openssl sqlite sqlite-libs tar \
+    && apk add --no-cache ca-certificates curl ffmpeg libgcc openssl sqlite sqlite-libs su-exec tar \
     && curl -fsSL \
         "https://github.com/nilaoda/N_m3u8DL-RE/releases/download/v${N_M3U8DL_RE_VERSION}/N_m3u8DL-RE_v${N_M3U8DL_RE_VERSION}_linux-musl-x64_${N_M3U8DL_RE_DATE}.tar.gz" \
         -o /tmp/N_m3u8DL-RE.tar.gz \
@@ -78,6 +78,10 @@ RUN mkdir -p /app/data/recordings /app/data/.tmp \
     && addgroup -S app && adduser -S -G app app \
     && chown -R app:app /app
 
+# PUID/PGID 动态用户入口脚本(entrypoint 启动时按环境变量调整 app 用户 uid/gid)
+COPY docker/entrypoint.sh /docker/entrypoint.sh
+RUN chmod +x /docker/entrypoint.sh
+
 ENV IPTV__SERVER__HOST=0.0.0.0 \
     IPTV__SERVER__PORT=3000 \
     IPTV__DATABASE__PATH=/app/data/iptv-recorder.db \
@@ -85,10 +89,13 @@ ENV IPTV__SERVER__HOST=0.0.0.0 \
     IPTV__STORAGE__TEMP_DIR=/app/data/.tmp \
     IPTV__STORAGE__PREVIEW_TEMP_DIR=/dev/shm/iptv-recorder-hls \
     IPTV__RECORDER__EXECUTABLE=N_m3u8DL-RE \
-    IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH=ffmpeg
+    IPTV__RECORDER__POST_PROCESS__FFMPEG_PATH=ffmpeg \
+    # PUID/PGID 默认 1000:1000(NAS 上用 `id` 看自己的 uid/gid 填入 .env)
+    PUID=1000 \
+    PGID=1000
 
-USER app
-
+# 注意:不设 USER —— 容器以 root 启动,entrypoint 内部 chown 后用 su-exec 切到 app
 EXPOSE 3000
 
+ENTRYPOINT ["/docker/entrypoint.sh"]
 CMD ["/app/iptv-recorder"]

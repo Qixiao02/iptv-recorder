@@ -1,8 +1,14 @@
-# IPTV Recorder —— 单镜像部署编排
+# IPTV Recorder —— 本地开发 + 单镜像部署编排(含 build)
+#
+# ⚠️ 本文件用途:本地开发 / 自行从源码构建镜像。需要完整源码 + Docker build。
+#    ★ 部署到 NAS/Linux 服务器请用 docker-compose.deploy.yml(纯镜像,无需源码,带 PUID/PGID)。
 #
 # 架构:前端构建产物已打包进后端镜像(见 Dockerfile),单容器同时提供
 #      React Web UI + REST API + WebSocket,统一监听 :3000(宿主映射 :3033)。
 #      无需单独的前端容器。
+#
+# 权限说明:本文件不设 user,走镜像默认(开发机通常无权限问题)。
+#          NAS/生产环境遇到权限问题(SQLite code 14)请改用 deploy 版 + PUID/PGID。
 #
 # 首次部署:
 #   1) bash scripts/generate-env.sh        # 生成 .env (JWT 密钥 + 初始密码, 必做)
@@ -12,9 +18,9 @@
 # 导出镜像(分发/备份):
 #   docker save iptv-recorder:0.1.7 -o iptv-recorder-0.1.7.tar
 #
-# 在另一台机器加载镜像并启动(无需源码):
-#   docker load -i iptv-recorder-0.1.6.tar
-#   docker compose up -d                   # 复用已加载的镜像,不触发 build
+# 在另一台机器加载镜像并启动(无需源码,用 deploy 版 compose):
+#   docker load -i iptv-recorder-0.1.7.tar
+#   docker compose -f docker-compose.deploy.yml up -d
 
 services:
   iptv-recorder:
@@ -45,8 +51,16 @@ services:
       # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
     security_opt:
       - no-new-privileges:true
+    # PUID/PGID 方案需要 root 启动 + entrypoint 用 su-exec 切换用户,
+    # 这需要 SETUID/SETGID capability。不能 cap_drop: ALL(会删掉这两个)。
+    # 保留 SETUID/SETGID,丢弃其他所有危险的 capability。
     cap_drop:
       - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN        # entrypoint 的 chown /app 需要
+      - FOWNER       # chown 改属主需要
     volumes:
       - ./backend/data:/app/data
       # ──────────────────────────────────────────────────────────────

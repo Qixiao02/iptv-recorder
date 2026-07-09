@@ -1,1 +1,7 @@
 backend/migrations/*.sql -text
+
+# Shell 脚本和 Dockerfile 必须用 LF 行尾(Windows autocrlf 会转 CRLF,
+# 导致容器内执行报 "/bin/sh^M: not found")。强制 eol=lf。
+*.sh text eol=lf
+docker/* text eol=lf
+Dockerfile text eol=lf
