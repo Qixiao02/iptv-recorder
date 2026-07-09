@@ -39,7 +39,31 @@ pub async fn init(db_path: &str, pool_size: u32) -> Result<Db> {
     let pool = SqlitePoolOptions::new()
         .max_connections(pool_size.max(1))
         .connect_with(options)
-        .await?;
+        .await
+        .map_err(|e| {
+            // SQLite CANTOPEN(code 14) 几乎都是权限问题:容器内运行用户对 db 所在目录
+            // 没有写权限(常见于 NAS 部署:宿主卷属主是 root,容器 app 用户写不进去)。
+            // 给出明确指引,而不是裸的 "unable to open database file"。
+            let msg = e.to_string();
+            if msg.contains("unable to open database file")
+                || msg.contains("code: 14")
+                || msg.contains("CANTOPEN")
+            {
+                anyhow::anyhow!(
+                    "无法打开数据库文件(权限被拒绝): {}\n\
+                     常见原因:容器运行用户对数据库目录 [{}] 没有写权限。\n\
+                     解决方法:\n\
+                     1) NAS/Linux 部署:在 .env 设置 PUID/PGID 与宿主用户对齐(执行 `id` 查看),\n\
+                        例: PUID=1000 PGID=1000\n\
+                     2) 或检查宿主挂载目录的属主/权限(chmod/chown),\n\
+                        确保容器运行用户可读写。",
+                    msg,
+                    absolute_path.display()
+                )
+            } else {
+                anyhow::anyhow!(e)
+            }
+        })?;
 
     run_migrations(&pool).await?;
 

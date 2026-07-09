@@ -1,8 +1,14 @@
-# IPTV Recorder —— 单镜像部署编排
+# IPTV Recorder —— 本地开发 + 单镜像部署编排(含 build)
+#
+# ⚠️ 本文件用途:本地开发 / 自行从源码构建镜像。需要完整源码 + Docker build。
+#    ★ 部署到 NAS/Linux 服务器请用 docker-compose.deploy.yml(纯镜像,无需源码,带 PUID/PGID)。
 #
 # 架构:前端构建产物已打包进后端镜像(见 Dockerfile),单容器同时提供
 #      React Web UI + REST API + WebSocket,统一监听 :3000(宿主映射 :3033)。
 #      无需单独的前端容器。
+#
+# 权限说明:本文件不设 user,走镜像默认(开发机通常无权限问题)。
+#          NAS/生产环境遇到权限问题(SQLite code 14)请改用 deploy 版 + PUID/PGID。
 #
 # 首次部署:
 #   1) bash scripts/generate-env.sh        # 生成 .env (JWT 密钥 + 初始密码, 必做)
@@ -12,9 +18,9 @@
 # 导出镜像(分发/备份):
 #   docker save iptv-recorder:0.1.7 -o iptv-recorder-0.1.7.tar
 #
-# 在另一台机器加载镜像并启动(无需源码):
-#   docker load -i iptv-recorder-0.1.6.tar
-#   docker compose up -d                   # 复用已加载的镜像,不触发 build
+# 在另一台机器加载镜像并启动(无需源码,用 deploy 版 compose):
+#   docker load -i iptv-recorder-0.1.7.tar
+#   docker compose -f docker-compose.deploy.yml up -d
 
 services:
   iptv-recorder:

@@ -3,9 +3,15 @@
 # 与 docker-compose.yml 的区别:
 #   - 只有 image:,无 build: —— 绝不触发本地构建,纯靠 docker load 加载的镜像
 #   - 数据卷用绝对路径 ./data(不依赖源码目录结构)
-#   - 以 root 运行 + 挂载宿主机存储卷,可直接录制到 NAS 任意目录
-#     (镜像本身以非 root 设计;此 compose 为 NAS 部署便利放开权限,
-#      安全边界低于源码版,适合可信内网 NAS)
+#   - PUID/PGID 动态用户:容器与宿主用户对齐,无需手动 chmod 即可读写 NAS 存储卷
+#     (镜像支持 PUID/PGID 环境变量,entrypoint 启动时自动切换用户)
+#
+# 权限配置(NAS 部署关键):
+#   1) 在 NAS 上执行 `id`,记下 uid 和 gid(如 uid=1000 gid=1000)
+#   2) 写进 .env:
+#        PUID=1000
+#        PGID=1000
+#   3) 容器启动后自动以该用户运行,挂载的存储卷(/vol00 等)都能读写
 #
 # 部署步骤:
 #   1) 把这三个文件传到服务器同一目录:
@@ -27,12 +33,10 @@
 #   5) 访问 http://<服务器IP>:5669,用 .env 里的初始密码登录 admin
 #
 # 录制到 NAS 指定目录:
-#   本 compose 以 root 运行,但挂载收紧为只挂存储卷(不挂整个根 / ),
-#   避免暴露 /etc /root /var 等系统敏感目录。
+#   PUID/PGID 与宿主用户对齐后,容器以该用户身份读写已挂载的存储卷,无需额外 chmod。
 #   飞牛(fnOS)存储池一般在 /vol00 /vol01 ...(NAS 上 `ls -d /vol*` 确认),
 #   已映射到容器内 /mnt/host/vol00 等。在 Web UI「设置 > 存储」点「选择目录」,
 #   从 /mnt/host 开始浏览,选中想要的目录后保存即可。
-#   因容器 root 身份,可读写已挂载的存储卷,无需额外 chmod。
 #   【加盘】若要新增存储卷,在下方 volumes 增一行 `- /你的路径:/mnt/host/你的路径`。
 #
 # 升级到新版本:
@@ -46,9 +50,11 @@ services:
     image: iptv-recorder:0.1.7
     container_name: iptv-recorder
     restart: unless-stopped
-    # 以 root 运行:让容器能直接读写宿主机挂载进来的存储卷(NAS 部署便利)。
-    # 镜像内默认是非 root app 用户;此覆盖放开权限,等同飞牛/群晖上多数自部署应用。
-    user: "0:0"
+    # 权限模型:PUID/PGID 动态用户(参照 jellyfin/sonarr)。
+    # 容器以 root 启动,entrypoint 按 PUID/PGID 调整 app 用户 uid/gid 并 chown /app,
+    # 再用 su-exec 切到该用户运行 —— 这样容器进程与宿主当前用户对齐,挂载卷都能读写。
+    # 在 NAS 上执行 `id` 看 uid/gid,填入 .env 的 PUID/PGID。默认 1000:1000。
+    # (不再需要 user:"0:0" 暴力 root,也不需要手动 chmod 宿主目录)
     env_file:
       - path: .env
         required: false
@@ -70,9 +76,8 @@ services:
       - ./data:/app/data
       # ──────────────────────────────────────────────────────────────
       # 宿主机存储卷映射:让 Web UI「设置 > 存储」能浏览并选择宿主机路径。
-      # 容器以 root 运行,可读写任意已挂载目录,无需额外 chmod。
+      # PUID/PGID 与宿主用户对齐后,容器以该用户身份读写已挂载卷,无需 chmod。
       #
-      # 【收紧挂载】只挂存储卷,不挂整个根 / ——避免暴露 /etc /root /var 等敏感目录。
       # 飞牛(fnOS)存储池一般在 /vol*(用 `ls -d /vol*` 在 NAS 上确认实际有哪些),
       # 按实际情况取消注释 / 增删。映射后容器内路径为 /mnt/host/<同名>。
       # 例:宿主 /vol00 → 容器 /mnt/host/vol00,Web UI 选目录时看到的就是这个路径。

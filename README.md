@@ -125,9 +125,40 @@ cd frontend && pnpm install && pnpm dev
 
 ## 🐳 Docker 部署
 
+### 两个 compose 文件，按场景选用
+
+| 文件 | 场景 | 特点 |
+|------|------|------|
+| `docker-compose.yml` | **本地开发 / 自行构建镜像** | 含 `build:`，需要完整源码，端口 3033 |
+| `docker-compose.deploy.yml` | **NAS / Linux 服务器部署** | 纯 `image:`，无需源码，端口 5669，带 PUID/PGID |
+
+> ⚠️ **部署到飞牛 NAS、群晖、Linux 服务器请用 `docker-compose.deploy.yml`**，不要用 `docker-compose.yml`（后者依赖源码目录结构，会因路径/权限不对导致 SQLite code 14 崩溃）。
+
+### 权限与 PUID/PGID（NAS 部署关键）
+
+镜像采用 **PUID/PGID 动态用户**（参照 jellyfin/sonarr 等成熟方案）：容器以 root 启动，入口脚本读取 `PUID`/`PGID` 环境变量，动态调整 `app` 用户的 uid/gid 与宿主用户对齐，再切换到该用户运行。这样容器进程的 uid/gid 和宿主当前用户一致，挂载进来的存储卷（`/vol00` 等）都能读写，**无需手动 chmod/chown**。
+
+**配置步骤**（部署到 NAS 时）：
+```bash
+# 1. 在 NAS 上查看自己的 uid/gid
+id
+# 输出示例: uid=1000(wren) gid=1000(Users) ...
+
+# 2. 写进 .env
+cat >> .env <<EOF
+PUID=1000    # 替换为你的 uid
+PGID=1000    # 替换为你的 gid
+EOF
+
+# 3. 用 deploy 版 compose 启动
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+如果遇到 `unable to open database file (code: 14)`，说明 PUID/PGID 没对齐 —— 容器内的运行用户对数据目录没有写权限。按上面步骤设好 PUID/PGID 即可。
+
 ### 容器安全
 
-容器默认以**非 root 用户**（`app`）运行，并应用最小权限策略：
+容器入口脚本以 root 启动（用于按 PUID/PGID 调整用户并 chown），完成用户切换后实际业务进程以**非 root 的 `app` 用户**运行。开发版 compose（`docker-compose.yml`）额外应用最小权限策略：
 
 ```yaml
 security_opt:
