@@ -51,8 +51,16 @@ services:
       # IPTV_JWT_SECRET 与 IPTV_INITIAL_ADMIN_PASSWORD 由 .env 提供,不在此硬编码
     security_opt:
       - no-new-privileges:true
+    # PUID/PGID 方案需要 root 启动 + entrypoint 用 su-exec 切换用户,
+    # 这需要 SETUID/SETGID capability。不能 cap_drop: ALL(会删掉这两个)。
+    # 保留 SETUID/SETGID,丢弃其他所有危险的 capability。
     cap_drop:
       - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN        # entrypoint 的 chown /app 需要
+      - FOWNER       # chown 改属主需要
     volumes:
       - ./backend/data:/app/data
       # ──────────────────────────────────────────────────────────────
