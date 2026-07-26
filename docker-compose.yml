@@ -4,7 +4,7 @@
 #    ★ 部署到 NAS/Linux 服务器请用 docker-compose.deploy.yml(纯镜像,无需源码,带 PUID/PGID)。
 #
 # 架构:前端构建产物已打包进后端镜像(见 Dockerfile),单容器同时提供
-#      React Web UI + REST API + WebSocket,统一监听 :3000(宿主映射 :3033)。
+#      React Web UI + REST API + WebSocket,统一监听 :3000(宿主映射 :5133)。
 #      无需单独的前端容器。
 #
 # 权限说明:本文件不设 user,走镜像默认(开发机通常无权限问题)。
@@ -13,7 +13,7 @@
 # 首次部署:
 #   1) bash scripts/generate-env.sh        # 生成 .env (JWT 密钥 + 初始密码, 必做)
 #   2) docker compose up -d --build        # 构建并启动(镜像打 tag: iptv-recorder:<版本>)
-#   3) 浏览器访问 http://localhost:3033
+#   3) 浏览器访问 http://localhost:5133
 #
 # 导出镜像(分发/备份):
 #   docker save iptv-recorder:0.1.7 -o iptv-recorder-0.1.7.tar
@@ -37,7 +37,7 @@ services:
       - path: .env
         required: false
     ports:
-      - "3033:3000"
+      - "5133:3000"
     environment:
       RUST_LOG: info
       IPTV__SERVER__HOST: 0.0.0.0
