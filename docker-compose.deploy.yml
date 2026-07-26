@@ -30,7 +30,7 @@
 #   4) 启动:
 #        docker compose -f docker-compose.deploy.yml up -d
 #
-#   5) 访问 http://<服务器IP>:5669,用 .env 里的初始密码登录 admin
+#   5) 访问 http://<服务器IP>:5133,用 .env 里的初始密码登录 admin
 #
 # 录制到 NAS 指定目录:
 #   PUID/PGID 与宿主用户对齐后,容器以该用户身份读写已挂载的存储卷,无需额外 chmod。
@@ -59,7 +59,7 @@ services:
       - path: .env
         required: false
     ports:
-      - "5669:3000"
+      - "5133:3000"
     environment:
       RUST_LOG: info
       IPTV__SERVER__HOST: 0.0.0.0

@@ -932,3 +932,105 @@ select.input {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ===== 时间设置:简单/高级模式切换 tab ===== */
+.schedule-mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.schedule-mode-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.schedule-mode-tab:hover {
+  color: var(--text-primary);
+}
+
+.schedule-mode-tab.active {
+  background: var(--bg-card);
+  color: var(--brand-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* ===== 时间选择器(原生 input[type=time])微调 ===== */
+.time-input {
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ===== 星期按钮组 ===== */
+.weekday-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.weekday-btn {
+  flex: 1;
+  min-width: 36px;
+  padding: 8px 4px !important;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* ===== 生成的 Cron 预览 ===== */
+.cron-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.cron-preview-label {
+  color: var(--text-tertiary);
+}
+
+.cron-preview-value {
+  font-family: var(--font-mono, monospace);
+  color: var(--brand-primary);
+  font-weight: 600;
+}
+
+/* ===== 时长输入:时+分并排 ===== */
+.duration-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.duration-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.duration-field .input {
+  padding-right: 48px;
+}
+
+.duration-unit {
+  position: absolute;
+  right: 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  pointer-events: none;
+}
