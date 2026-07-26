@@ -7,6 +7,7 @@ import { toast } from '@/stores/toastStore';
 import { useI18nNamespace } from '@/i18n/useI18nNamespace';
 import { channelKeys, scheduleKeys, upcomingKeys } from '@/lib/queryKeys';
 import { useModalA11y } from '@/lib/useModalA11y';
+import { buildCron, parseCron, WEEKDAY_ORDER } from '@/lib/cronBuilder';
 import { X, Loader2, Settings, HelpCircle, Search, ChevronDown, Check } from 'lucide-react';
 import type { Schedule, CreateScheduleRequest, Channel } from '@/types';
 import './Modal.css';
@@ -66,6 +67,14 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showCronHelp, setShowCronHelp] = useState(false);
   const [showTranscodeHelp, setShowTranscodeHelp] = useState(false);
+  // 时间设置模式:simple(时间+星期+时长,小白友好) / advanced(原始 cron)
+  const [scheduleMode, setScheduleMode] = useState<'simple' | 'advanced'>('simple');
+  // 简单模式状态:开始时间 + 选中的星期
+  const [startTime, setStartTime] = useState('19:00');
+  const [weekdays, setWeekdays] = useState<number[]>([]);
+  // 简单模式时长:小时 + 分钟(提交时换算成秒)
+  const [durationHours, setDurationHours] = useState(1);
+  const [durationMinutes, setDurationMinutes] = useState(0);
   const cronPresets = [
     { label: t('components:scheduleModal.cronPresets.daily19'), value: '0 19 * * *' },
     { label: t('components:scheduleModal.cronPresets.daily20'), value: '0 20 * * *' },
@@ -156,11 +165,30 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
           transcode_mode: schedule.transcode_mode || 'off',
           transcode_preset: schedule.transcode_preset || 'medium',
         });
+        // 智能解析 cron 回填简单 UI:能解析就用简单模式,否则进高级模式
+        const parsed = parseCron(schedule.cron_expression);
+        if (parsed) {
+          setStartTime(parsed.time);
+          setWeekdays(parsed.weekdays);
+          setScheduleMode('simple');
+        } else {
+          setScheduleMode('advanced');
+        }
+        // 时长(秒)拆分成时+分回填
+        const secs = schedule.duration_seconds || 3600;
+        setDurationHours(Math.floor(secs / 3600));
+        setDurationMinutes(Math.floor((secs % 3600) / 60));
       } else {
         setForm({
           ...defaultForm,
           channel_id: channels?.[0]?.id || '',
         });
+        // 新建默认值
+        setStartTime('19:00');
+        setWeekdays([]);
+        setScheduleMode('simple');
+        setDurationHours(1);
+        setDurationMinutes(0);
       }
     });
   }, [schedule, channels]);
@@ -200,6 +228,13 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
     // 自定义输出目录已统一收归到系统设置，提交时清空，由后端使用全局录制保存路径
     const { output_dir: _omitted, ...payload } = form;
     void _omitted;
+
+    // 简单模式:从 startTime + weekdays 组装 cron,从时+分换算 duration_seconds
+    if (scheduleMode === 'simple') {
+      payload.cron_expression = buildCron({ time: startTime, weekdays });
+      payload.duration_seconds = durationHours * 3600 + durationMinutes * 60;
+    }
+    // 高级模式:payload 里的 cron_expression/duration_seconds 已由用户直接编辑
 
     if (isEdit && schedule) {
       updateMutation.mutate({ id: schedule.id, data: payload });
@@ -312,97 +347,213 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({ isOpen, onClose, s
             </div>
           </div>
 
+          {/* ===== 时间设置:简单模式(时间+星期) / 高级模式(原始 cron) ===== */}
           <div className="form-group">
-            <div className="label-with-help">
-              <label>{t('components:scheduleModal.cron')}</label>
+            {/* 模式切换 tab */}
+            <div className="schedule-mode-tabs">
               <button
                 type="button"
-                className="help-btn"
-                onClick={() => setShowCronHelp(!showCronHelp)}
-                title={t('components:scheduleModal.cronHelpTitle')}
-                aria-label={t('components:scheduleModal.cronHelpTitle')}
-                aria-expanded={showCronHelp}
+                className={`schedule-mode-tab ${scheduleMode === 'simple' ? 'active' : ''}`}
+                onClick={() => setScheduleMode('simple')}
               >
-                <HelpCircle size={16} />
+                {t('components:scheduleModal.modeSimple')}
+              </button>
+              <button
+                type="button"
+                className={`schedule-mode-tab ${scheduleMode === 'advanced' ? 'active' : ''}`}
+                onClick={() => setScheduleMode('advanced')}
+              >
+                {t('components:scheduleModal.modeAdvanced')}
               </button>
             </div>
-            {showCronHelp && (
-              <div className="cron-help">
-                <div className="cron-help-header">{t('components:scheduleModal.cronFormat')}</div>
-                <div className="cron-help-table">
-                  <div className="cron-help-row">
-                    <span className="field">{t('components:scheduleModal.cronFields.minute')}</span>
-                    <span>0-59</span>
-                    <span>{t('components:scheduleModal.cronExamples.minute')}</span>
+
+            {/* ----- 简单模式:时间 + 星期 ----- */}
+            {scheduleMode === 'simple' ? (
+              <>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>{t('components:scheduleModal.startTime')}</label>
+                    <input
+                      type="time"
+                      className="input time-input"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                    />
                   </div>
-                  <div className="cron-help-row">
-                    <span className="field">{t('components:scheduleModal.cronFields.hour')}</span>
-                    <span>0-23</span>
-                    <span>{t('components:scheduleModal.cronExamples.hour')}</span>
-                  </div>
-                  <div className="cron-help-row">
-                    <span className="field">{t('components:scheduleModal.cronFields.day')}</span>
-                    <span>1-31</span>
-                    <span>{t('components:scheduleModal.cronExamples.day')}</span>
-                  </div>
-                  <div className="cron-help-row">
-                    <span className="field">{t('components:scheduleModal.cronFields.month')}</span>
-                    <span>1-12</span>
-                    <span>{t('components:scheduleModal.cronExamples.month')}</span>
-                  </div>
-                  <div className="cron-help-row">
-                    <span className="field">{t('components:scheduleModal.cronFields.week')}</span>
-                    <span>0-6</span>
-                    <span>{t('components:scheduleModal.cronExamples.week')}</span>
+                  <div className="form-group">
+                    <label>{t('components:scheduleModal.weekdays')}</label>
+                    <div className="weekday-buttons">
+                      {WEEKDAY_ORDER.map((day) => {
+                        const key = (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const)[day];
+                        const selected = weekdays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            className={`preset-btn weekday-btn ${selected ? 'active' : ''}`}
+                            onClick={() =>
+                              setWeekdays((prev) =>
+                                prev.includes(day)
+                                  ? prev.filter((d) => d !== day)
+                                  : [...prev, day],
+                              )
+                            }
+                            aria-pressed={selected}
+                          >
+                            {t(`components:scheduleModal.weekdayShort.${key}`)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {weekdays.length === 0 && (
+                      <span className="duration-hint">
+                        {t('components:scheduleModal.everyDay')}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="cron-help-examples">
-                  <div><code>0 19 * * *</code> = {t('components:scheduleModal.cronExamples.daily')}</div>
-                  <div><code>30 8 * * 1-5</code> = {t('components:scheduleModal.cronExamples.workday')}</div>
-                  <div><code>0 */2 * * *</code> = {t('components:scheduleModal.cronExamples.everyTwoHours')}</div>
-                  <div><code>0 20 * * 6,0</code> = {t('components:scheduleModal.cronExamples.weekend')}</div>
+                {/* 生成的 cron 预览(让用户对实际规则有感知) */}
+                <div className="cron-preview">
+                  <span className="cron-preview-label">
+                    {t('components:scheduleModal.cronPreview')}:
+                  </span>
+                  <code className="cron-preview-value">
+                    {buildCron({ time: startTime, weekdays })}
+                  </code>
                 </div>
-              </div>
+              </>
+            ) : (
+              /* ----- 高级模式:原始 cron 输入 + 预设 + 帮助(折叠) ----- */
+              <>
+                <div className="label-with-help">
+                  <label>{t('components:scheduleModal.cron')}</label>
+                  <button
+                    type="button"
+                    className="help-btn"
+                    onClick={() => setShowCronHelp(!showCronHelp)}
+                    title={t('components:scheduleModal.cronHelpTitle')}
+                    aria-label={t('components:scheduleModal.cronHelpTitle')}
+                    aria-expanded={showCronHelp}
+                  >
+                    <HelpCircle size={16} />
+                  </button>
+                </div>
+                {showCronHelp && (
+                  <div className="cron-help">
+                    <div className="cron-help-header">{t('components:scheduleModal.cronFormat')}</div>
+                    <div className="cron-help-table">
+                      <div className="cron-help-row">
+                        <span className="field">{t('components:scheduleModal.cronFields.minute')}</span>
+                        <span>0-59</span>
+                        <span>{t('components:scheduleModal.cronExamples.minute')}</span>
+                      </div>
+                      <div className="cron-help-row">
+                        <span className="field">{t('components:scheduleModal.cronFields.hour')}</span>
+                        <span>0-23</span>
+                        <span>{t('components:scheduleModal.cronExamples.hour')}</span>
+                      </div>
+                      <div className="cron-help-row">
+                        <span className="field">{t('components:scheduleModal.cronFields.day')}</span>
+                        <span>1-31</span>
+                        <span>{t('components:scheduleModal.cronExamples.day')}</span>
+                      </div>
+                      <div className="cron-help-row">
+                        <span className="field">{t('components:scheduleModal.cronFields.month')}</span>
+                        <span>1-12</span>
+                        <span>{t('components:scheduleModal.cronExamples.month')}</span>
+                      </div>
+                      <div className="cron-help-row">
+                        <span className="field">{t('components:scheduleModal.cronFields.week')}</span>
+                        <span>0-6</span>
+                        <span>{t('components:scheduleModal.cronExamples.week')}</span>
+                      </div>
+                    </div>
+                    <div className="cron-help-examples">
+                      <div><code>0 19 * * *</code> = {t('components:scheduleModal.cronExamples.daily')}</div>
+                      <div><code>30 8 * * 1-5</code> = {t('components:scheduleModal.cronExamples.workday')}</div>
+                      <div><code>0 */2 * * *</code> = {t('components:scheduleModal.cronExamples.everyTwoHours')}</div>
+                      <div><code>0 20 * * 6,0</code> = {t('components:scheduleModal.cronExamples.weekend')}</div>
+                    </div>
+                  </div>
+                )}
+                <input
+                  type="text"
+                  className="input"
+                  placeholder={t('components:scheduleModal.cronPlaceholder')}
+                  value={form.cron_expression}
+                  onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
+                />
+                <div className="cron-presets">
+                  {cronPresets.map((preset) => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      className={`preset-btn ${form.cron_expression === preset.value ? 'active' : ''}`}
+                      onClick={() => setForm({ ...form, cron_expression: preset.value })}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
-            <input
-              type="text"
-              className="input"
-              placeholder={t('components:scheduleModal.cronPlaceholder')}
-              value={form.cron_expression}
-              onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
-            />
-            <div className="cron-presets">
-              {cronPresets.map((preset) => (
-                <button
-                  key={preset.value}
-                  type="button"
-                  className={`preset-btn ${form.cron_expression === preset.value ? 'active' : ''}`}
-                  onClick={() => setForm({ ...form, cron_expression: preset.value })}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
           </div>
 
+          {/* ===== 录制时长:简单模式用时+分,高级模式用秒 ===== */}
           <div className="form-row">
             <div className="form-group">
-              <label>{t('components:scheduleModal.durationSeconds')}</label>
-              <input
-                type="number"
-                className="input"
-                value={form.duration_seconds}
-                onChange={(e) => setForm({ ...form, duration_seconds: parseInt(e.target.value) || 0 })}
-                min={60}
-              />
-              {form.duration_seconds > 0 && (
-                <span className="duration-hint">
-                  = {t('components:scheduleModal.durationHint', {
-                    hours: Math.floor(form.duration_seconds / 3600),
-                    minutes: Math.floor((form.duration_seconds % 3600) / 60),
-                  })}
-                </span>
+              <label>{t('components:scheduleModal.durationSecondsLegacy')}</label>
+              {scheduleMode === 'simple' ? (
+                <div className="duration-inputs">
+                  <div className="duration-field">
+                    <input
+                      type="number"
+                      className="input"
+                      value={durationHours}
+                      onChange={(e) => setDurationHours(Math.max(0, parseInt(e.target.value) || 0))}
+                      min={0}
+                    />
+                    <span className="duration-unit">
+                      {t('components:scheduleModal.durationHours')}
+                    </span>
+                  </div>
+                  <div className="duration-field">
+                    <input
+                      type="number"
+                      className="input"
+                      value={durationMinutes}
+                      onChange={(e) => setDurationMinutes(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                      min={0}
+                      max={59}
+                    />
+                    <span className="duration-unit">
+                      {t('components:scheduleModal.durationMinutes')}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <input
+                  type="number"
+                  className="input"
+                  value={form.duration_seconds}
+                  onChange={(e) => setForm({ ...form, duration_seconds: parseInt(e.target.value) || 0 })}
+                  min={60}
+                />
               )}
+              {(() => {
+                const secs =
+                  scheduleMode === 'simple'
+                    ? durationHours * 3600 + durationMinutes * 60
+                    : form.duration_seconds;
+                return secs > 0 ? (
+                  <span className="duration-hint">
+                    = {t('components:scheduleModal.durationHint', {
+                      hours: Math.floor(secs / 3600),
+                      minutes: Math.floor((secs % 3600) / 60),
+                    })}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="form-group">
               <label>{t('components:scheduleModal.priority')}</label>
